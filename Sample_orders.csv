@@ -1,0 +1,41 @@
+order_id,store_id,submitted_at,line_item_number,drink_name,size,milk,add_ins,quantity,total_price,scenario_tag,stock_runs_out_mid_order,expected_outcome,expected_missing_component,expected_message
+MO-250303-0001,SB-20516,2025-03-03T05:42:08-08:00,1,Pike Place Roast,Grande,None,,1,4.25,store_closed,false,refused,store_closed,Bellevue Square is closed right now and can't take mobile orders.
+MO-250303-0002,SB-11937,2025-03-03T06:34:51-08:00,1,Caffè Latte,Grande,2% Milk,,1,6.01,in_stock,false,accepted,,
+MO-250303-0003,SB-10482,2025-03-03T06:48:17-08:00,1,Pike Place Roast,Venti,None,,1,4.80,in_stock,false,accepted,,
+MO-250303-0004,SB-11937,2025-03-03T07:05:33-08:00,1,Iced Caramel Macchiato,Venti,2% Milk,Vanilla Syrup;Caramel Drizzle,1,7.67,in_stock,false,accepted,,
+MO-250303-0005,SB-11937,2025-03-03T07:22:40-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Grande,Oatmilk,Brown Sugar Syrup,1,6.90,in_stock,false,accepted,,
+MO-250303-0006,SB-10482,2025-03-03T08:14:02-08:00,1,Chai Tea Latte,Tall,Nonfat Milk,,1,5.79,in_stock,false,accepted,,
+MO-250304-0007,SB-10482,2025-03-04T06:41:26-08:00,1,Caffè Latte,Grande,Almondmilk,Vanilla Syrup,1,7.67,base_out_of_stock,false,refused,Almondmilk,"Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now."
+MO-250304-0008,SB-11937,2025-03-04T06:57:12-08:00,1,Cold Brew,Venti,None,Vanilla Sweet Cream Cold Foam,1,7.72,in_stock,false,accepted,,
+MO-250304-0009,SB-11937,2025-03-04T07:18:45-08:00,1,Flat White,Grande,Whole Milk,Extra Shot,1,7.95,in_stock,false,accepted,,
+MO-250304-0010,SB-10482,2025-03-04T07:33:09-08:00,1,Matcha Tea Latte,Grande,Almondmilk,,1,7.34,base_out_of_stock,false,refused,Almondmilk,"Line 1, Grande Matcha Tea Latte: Almondmilk is unavailable at this store right now."
+MO-250304-0011,SB-11937,2025-03-04T07:51:38-08:00,1,Caramel Frappuccino,Grande,Whole Milk,Caramel Drizzle,2,14.24,in_stock,false,accepted,,
+MO-250304-0012,SB-11937,2025-03-04T12:26:54-08:00,1,Pike Place Roast,Grande,None,,2,8.50,in_stock,false,accepted,,
+MO-250305-0013,SB-20516,2025-03-05T06:38:20-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Grande,Oatmilk,Brown Sugar Syrup,1,6.90,store_closed,false,refused,store_closed,Bellevue Square is closed right now and can't take mobile orders.
+MO-250305-0014,SB-10482,2025-03-05T06:52:47-08:00,1,Cold Brew,Venti,None,Vanilla Sweet Cream Cold Foam,1,7.72,add_in_out_of_stock,false,refused,Vanilla Sweet Cream Cold Foam,"Line 1, Venti Cold Brew: Vanilla Sweet Cream Cold Foam is unavailable at this store right now."
+MO-250305-0015,SB-11937,2025-03-05T07:09:13-08:00,1,Iced Caramel Macchiato,Grande,Almondmilk,Vanilla Syrup;Caramel Drizzle,1,7.56,in_stock,false,accepted,,
+MO-250305-0016,SB-11937,2025-03-05T07:44:29-08:00,1,Caffè Latte,Venti,2% Milk,Vanilla Syrup;Extra Shot,1,8.83,in_stock,false,accepted,,
+MO-250305-0017,SB-10482,2025-03-05T15:37:02-08:00,1,Chai Tea Latte,Grande,2% Milk,Cinnamon Dolce Topping,1,7.01,in_stock,false,accepted,,
+MO-250306-0018,SB-11937,2025-03-06T06:31:55-08:00,1,Cold Brew,Grande,None,,1,5.79,in_stock,false,accepted,,
+MO-250306-0019,SB-10482,2025-03-06T06:46:31-08:00,1,Iced Caramel Macchiato,Grande,2% Milk,Vanilla Syrup;Caramel Drizzle,1,6.79,add_in_out_of_stock,false,refused,Caramel Drizzle,"Line 1, Grande Iced Caramel Macchiato: Caramel Drizzle is unavailable at this store right now."
+MO-250306-0020,SB-11937,2025-03-06T07:02:18-08:00,1,Matcha Tea Latte,Venti,Coconutmilk,,1,7.89,in_stock,false,accepted,,
+MO-250306-0021,SB-11937,2025-03-06T07:27:44-08:00,1,Flat White,Tall,Whole Milk,,1,6.01,in_stock,false,accepted,,
+MO-250306-0022,SB-11937,2025-03-06T08:05:16-08:00,1,Caramel Frappuccino,Venti,2% Milk,Caramel Drizzle;Extra Shot,1,9.05,in_stock,false,accepted,,
+MO-250307-0023,SB-10482,2025-03-07T06:31:07-08:00,1,Caffè Latte,Grande,Oatmilk,,1,6.79,stock_runs_out_mid_order,true,accepted,,
+MO-250307-0024,SB-10482,2025-03-07T06:36:42-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Grande,Oatmilk,Brown Sugar Syrup,1,6.90,stock_runs_out_mid_order,true,refused,Oatmilk,"Line 1, Grande Iced Brown Sugar Oatmilk Shaken Espresso: Oatmilk is unavailable at this store right now."
+MO-250307-0025,SB-10482,2025-03-07T06:40:19-08:00,1,Flat White,Grande,Oatmilk,Extra Shot,1,8.72,stock_runs_out_mid_order,true,refused,Oatmilk,"Line 1, Grande Flat White: Oatmilk is unavailable at this store right now."
+MO-250307-0026,SB-10482,2025-03-07T06:43:55-08:00,1,Cold Brew,Venti,None,Vanilla Sweet Cream Cold Foam;Vanilla Syrup,1,8.61,stock_runs_out_mid_order,true,refused,Vanilla Sweet Cream Cold Foam,"Line 1, Venti Cold Brew: Vanilla Sweet Cream Cold Foam is unavailable at this store right now."
+MO-250307-0027,SB-10482,2025-03-07T06:44:38-08:00,1,Chai Tea Latte,Venti,Oatmilk,,1,7.67,stock_runs_out_mid_order,true,refused,Oatmilk,"Line 1, Venti Chai Tea Latte: Oatmilk is unavailable at this store right now."
+MO-250307-0028,SB-11937,2025-03-07T06:49:21-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Grande,Oatmilk,Brown Sugar Syrup,4,27.59,insufficient_quantity,false,refused,Brown Sugar Syrup,"Line 1, Grande Iced Brown Sugar Oatmilk Shaken Espresso: Brown Sugar Syrup is unavailable at this store right now."
+MO-250307-0029,SB-10482,2025-03-07T07:03:12-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Venti,Oatmilk,Brown Sugar Syrup;Extra Shot,1,9.16,base_out_of_stock,false,refused,Oatmilk,"Line 1, Venti Iced Brown Sugar Oatmilk Shaken Espresso: Oatmilk is unavailable at this store right now."
+MO-250307-0030,SB-11937,2025-03-07T07:16:50-08:00,1,Cold Brew,Grande,None,Brown Sugar Syrup,3,20.03,insufficient_quantity,false,refused,Brown Sugar Syrup,"Line 1, Grande Cold Brew: Brown Sugar Syrup is unavailable at this store right now."
+MO-250307-0031,SB-10482,2025-03-07T07:38:04-08:00,1,Matcha Tea Latte,Grande,Oatmilk,,1,7.34,base_out_of_stock,false,refused,Oatmilk,"Line 1, Grande Matcha Tea Latte: Oatmilk is unavailable at this store right now."
+MO-250307-0032,SB-11937,2025-03-07T08:22:37-08:00,1,Vanilla Sweet Cream Cold Brew,Grande,None,,2,13.13,in_stock,false,accepted,,
+MO-250308-0033,SB-10482,2025-03-08T07:12:46-08:00,1,Caffè Latte,Venti,Oatmilk,Vanilla Syrup,1,8.22,base_out_of_stock,false,refused,Oatmilk,"Line 1, Venti Caffè Latte: Oatmilk is unavailable at this store right now."
+MO-250308-0034,SB-20516,2025-03-08T08:01:29-08:00,1,Caramel Frappuccino,Grande,Whole Milk,Caramel Drizzle,1,7.12,store_closed,false,refused,store_closed,Bellevue Square is closed right now and can't take mobile orders.
+MO-250308-0035,SB-10482,2025-03-08T08:19:58-08:00,1,Vanilla Sweet Cream Cold Brew,Venti,None,Vanilla Sweet Cream Cold Foam,1,8.50,add_in_out_of_stock,false,refused,Vanilla Sweet Cream Cold Foam,"Line 1, Venti Vanilla Sweet Cream Cold Brew: Vanilla Sweet Cream Cold Foam is unavailable at this store right now."
+MO-250308-0036,SB-11937,2025-03-08T09:47:13-08:00,1,Chai Tea Latte,Grande,Soymilk,,3,21.35,in_stock,false,accepted,,
+MO-250309-0037,SB-10482,2025-03-09T07:06:24-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Grande,Oatmilk,Brown Sugar Syrup,1,6.90,base_out_of_stock,false,refused,Oatmilk,"Line 1, Grande Iced Brown Sugar Oatmilk Shaken Espresso: Oatmilk is unavailable at this store right now."
+MO-250309-0038,SB-11937,2025-03-09T07:29:51-08:00,1,Iced Brown Sugar Oatmilk Shaken Espresso,Venti,Oatmilk,Brown Sugar Syrup,1,7.78,add_in_out_of_stock,false,refused,Brown Sugar Syrup,"Line 1, Venti Iced Brown Sugar Oatmilk Shaken Espresso: Brown Sugar Syrup is unavailable at this store right now."
+MO-250309-0039,SB-10482,2025-03-09T08:11:35-08:00,1,Caramel Frappuccino,Venti,Whole Milk,Caramel Drizzle,1,7.67,add_in_out_of_stock,false,refused,Caramel Drizzle,"Line 1, Venti Caramel Frappuccino: Caramel Drizzle is unavailable at this store right now."
+MO-250309-0040,SB-20516,2025-03-09T19:54:12-08:00,1,Flat White,Grande,Whole Milk,,1,6.57,store_closed,false,refused,store_closed,Bellevue Square is closed right now and can't take mobile orders.

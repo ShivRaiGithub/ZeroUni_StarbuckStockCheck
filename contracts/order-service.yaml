@@ -433,9 +433,10 @@ components:
               type: string
               description: |
                 By details[0].reason:
-                  component_ran_out -> "We've refunded your payment in full. <details[0].missing_component>
-                                       ran out before we could make your order. Please try again with a
-                                       different option."
+                  component_ran_out -> "We've refunded your payment in full. <components> ran out before we
+                                       could make your order. Please try again with a different option."
+                                       <components> = every DISTINCT details[].missing_component, in
+                                       details[] order, joined as "A", "A and B" or "A, B and C".
                   store_closed      -> "We've refunded your payment in full. <details[0].store_name> closed
                                        before we could make your order."
                   stock_unreachable -> "We've refunded your payment in full. We couldn't make your order
@@ -447,7 +448,10 @@ components:
             details:
               type: array
               minItems: 1
-              description: component_ran_out lists every short component, ordered by line_item.
+              description: |
+                component_ran_out: one item per short line/component, in a fixed order: by line_item,
+                then the milk before the add-ins, then add-ins in the order listed on that order line.
+                The order service sorts them itself; it does not rely on the stock service's order.
               items:
                 type: object
                 required: [reason, order_id, refunded]

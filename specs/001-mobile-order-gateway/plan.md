@@ -73,10 +73,16 @@ does **not** recheck stock at confirm. It relies on the hold, which must still b
    `store_closed`), the order service refunds the charge in full (`Idempotency-Key`
    `{order_id}:refund`) and the order ends as `refunded`. The customer gets **409**
    `order_refunded` with this message:
-   "We've refunded your payment in full. <Component> ran out before we could make your order. Please try again with a different option."
-   `<Component>` is filled from `error.details[0].missing_component`, which is the component the
-   refused fresh hold reported as short. `details[]` lists every short component, each with
-   `reason: component_ran_out`, `line_item` and `missing_component`. If the fresh hold was refused
+   "We've refunded your payment in full. <Components> ran out before we could make your order. Please try again with a different option."
+   `<Components>` names **every** component the refused fresh hold reported as short, each once,
+   taken from `error.details[].missing_component` and joined as "A", "A and B" or "A, B and C".
+   `details[]` has one item per short line/component, each with `reason: component_ran_out`,
+   `line_item` and `missing_component`. The order service sorts `details[]` itself, in a fixed
+   order: by `line_item`, then the milk before the add-ins, then the add-ins in the order the
+   customer listed them. It does not rely on the stock service's order. A component short on two
+   lines appears in `details[]` twice but is named once in the message. This is the same rule for
+   the message text and for `details[]`, so the customer always hears about all of them, and always
+   in the same order. If the fresh hold was refused
    with `store_closed` instead, the message is "We've refunded your payment in full.
    <Store Name> closed before we could make your order.", with `<Store Name>` taken from
    `error.details[0].store_name`. If the request has already returned,
@@ -275,5 +281,7 @@ and `test_app.py` (milk prototype) stay until the stock service replaces them.
 - Closed the gap where a hold could expire after a charge but before confirm. The order service now
   rechecks stock with one fresh hold. If that hold is refused, it refunds the charge and returns 409
   `order_refunded`, never "unavailable". `contracts/order-service.yaml` and `contracts/gateway.yaml`
-  gained `order_refunded` and the `refunded` order status. See "What the order does if the hold
+  gained `order_refunded` and the `refunded` order status. The refund message names every short
+  component in a fixed order (line, milk before add-ins, add-ins as listed). See "What the order
+  does if the hold
   expires before confirm".

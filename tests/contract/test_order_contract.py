@@ -23,7 +23,7 @@ def assert_refused(env, r, order_id, code, message):
     assert r.status_code == 409
     assert body["error"]["code"] == code
     assert body["error"]["message"] == message
-    assert env.payment.calls_for(order_id) == 0, "payment must never be requested for a refused order"
+    assert env.payment.calls == [], "payment must never be requested for a refused order"
     return body
 
 
@@ -268,10 +268,20 @@ HOLD_A = "hold_" + "A" * 26
 HOLD_B = "hold_" + "B" * 26
 
 
-def _expired_hold_stub(rehold_outcome):
+def _short(line_item, component, component_type):
+    return {"reason": "base_out_of_stock" if component_type == "drink_base" else "add_in_out_of_stock",
+            "line_item": line_item, "missing_component": component, "component_type": component_type,
+            "needed": 1, "available": 0}
+
+
+DEFAULT_SHORT = [_short(1, "Oatmilk", "drink_base")]
+
+
+def _expired_hold_stub(rehold_outcome, shortfalls=None):
     """Stock stub: the first hold expires before confirm (409 hold_not_active).
 
-    rehold_outcome: "available" -> the fresh hold succeeds; "gone" -> the fresh hold is refused.
+    rehold_outcome: "available" -> the fresh hold succeeds; "gone" -> the fresh hold is refused
+    with `shortfalls` (default: Oatmilk), returned in the order given, which may be scrambled.
     """
     calls = []
 
@@ -288,9 +298,8 @@ def _expired_hold_stub(rehold_outcome):
             if rehold_outcome == "available":
                 return httpx.Response(201, json=hold(HOLD_B))
             return httpx.Response(409, json={"request_id": "s", "error": {
-                "code": "component_unavailable", "message": "1 component short at SB-10482.",
-                "details": [{"reason": "base_out_of_stock", "line_item": 1, "missing_component": "Oatmilk",
-                             "component_type": "drink_base", "needed": 1, "available": 0}]}})
+                "code": "component_unavailable", "message": "components short at SB-10482.",
+                "details": shortfalls or DEFAULT_SHORT}})
         if path == f"/v1/holds/{HOLD_A}/confirm":
             return httpx.Response(409, json={"request_id": "s", "error": {
                 "code": "hold_not_active", "message": "Hold expired.", "details": []}})
@@ -343,6 +352,47 @@ def test_hold_expired_and_stock_gone_refunds_and_never_says_unavailable(tmp_path
         repeat = place(env, order_body("MO-C-0019", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk")))
         assert ORDER.check(repeat) == body
         assert env.payment.refunded_order_ids == ["MO-C-0019"], "refunded once, not again on repeat"
+
+
+REFUND_LEAD = "We've refunded your payment in full. "
+REFUND_TAIL = " ran out before we could make your order. Please try again with a different option."
+
+LATTE_2_ADDINS = line("Caffè Latte", "Grande", "Oatmilk", ["Vanilla Syrup", "Caramel Drizzle"])
+
+
+@pytest.mark.parametrize("lines, shortfalls, expected, names", [
+    pytest.param(
+        [line("Caffè Latte", "Grande", "Oatmilk", ["Vanilla Syrup"])],
+        [_short(1, "Vanilla Syrup", "add_in"), _short(1, "Oatmilk", "drink_base")],
+        [(1, "Oatmilk"), (1, "Vanilla Syrup")], "Oatmilk and Vanilla Syrup",
+        id="two_short_milk_before_add_in"),
+    pytest.param(
+        [LATTE_2_ADDINS, line("Chai Tea Latte", "Venti", "Almondmilk")],
+        [_short(2, "Almondmilk", "drink_base"), _short(1, "Caramel Drizzle", "add_in"),
+         _short(1, "Oatmilk", "drink_base"), _short(1, "Vanilla Syrup", "add_in")],
+        [(1, "Oatmilk"), (1, "Vanilla Syrup"), (1, "Caramel Drizzle"), (2, "Almondmilk")],
+        "Oatmilk, Vanilla Syrup, Caramel Drizzle and Almondmilk",
+        id="four_short_line_then_milk_then_add_ins_as_listed"),
+    pytest.param(
+        [line("Caffè Latte", "Grande", "Oatmilk"), line("Chai Tea Latte", "Venti", "Oatmilk")],
+        [_short(2, "Oatmilk", "drink_base"), _short(1, "Oatmilk", "drink_base")],
+        [(1, "Oatmilk"), (2, "Oatmilk")], "Oatmilk",
+        id="same_component_on_two_lines_named_once"),
+])
+def test_refund_names_every_short_component_in_stable_order(tmp_path, lines, shortfalls, expected, names):
+    # The stock stub returns the shortfalls scrambled; the order service must sort them
+    # (line_item, then milk before add-ins, then add-ins as listed) and name each once.
+    calls, handler = _expired_hold_stub("gone", shortfalls)
+    with order_service(tmp_path, stock_client=mock_client(handler, "http://stock")) as env:
+        r = place(env, order_body("MO-C-0020", "SB-10482", *lines))
+        body = ORDER.check(r)
+        assert r.status_code == 409
+        assert body["error"]["code"] == "order_refunded"
+        assert body["error"]["message"] == REFUND_LEAD + names + REFUND_TAIL
+        assert "unavailable" not in body["error"]["message"].lower()
+        assert [(d["line_item"], d["missing_component"]) for d in body["error"]["details"]] == expected
+        assert all(d["reason"] == "component_ran_out" for d in body["error"]["details"])
+        assert env.payment.refunded_order_ids == ["MO-C-0020"]
 
 
 # ------------------------------------------------------------------ GET /v1/orders/{order_id}

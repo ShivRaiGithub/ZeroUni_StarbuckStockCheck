@@ -1,0 +1,172 @@
+openapi: 3.1.0
+info:
+  title: Order Service
+  version: 1.0.0
+  description: |
+    Owns orders. Flow: validate -> POST stock /v1/holds -> (only on 201) request payment ->
+    confirm hold on charge / release hold on decline. Never reads stock data directly and never
+    caches counts or store status. Stock refusals are always 409, never 502/503/504.
+    order_id is the idempotency key: a repeat returns the stored final result.
+servers:
+  - url: http://order:8000
+paths:
+  /v1/orders:
+    post:
+      operationId: placeOrder
+      parameters: [ { $ref: '#/components/parameters/RequestId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderRequest' }
+            examples:
+              accepted:
+                value:
+                  order_id: MO-250303-0003
+                  store_id: SB-10482
+                  submitted_at: '2025-03-03T06:48:17-08:00'
+                  drinks: [ { drink: Pike Place Roast, size: Venti, milk: None, add_ins: [], quantity: 1 } ]
+      responses:
+        '201':
+          description: Accepted. Hold confirmed (or confirm queued) and payment charged.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+        '400':
+          description: invalid_order (shape, or unrecognised drink/size/milk/add-in). Nothing reserved, no payment.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '402':
+          description: payment_declined. Hold was released immediately.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404':
+          description: unknown_store
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: |
+            Refusal: store_closed | component_unavailable | order_id_conflict.
+            No payment requested; nothing left reserved. Not retryable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                store_closed:
+                  value:
+                    request_id: 8b0e…
+                    error:
+                      code: store_closed
+                      message: Bellevue Square is closed right now and can't take mobile orders.
+                      details: { store_id: SB-20516, store_name: Bellevue Square }
+                component_unavailable:
+                  value:
+                    request_id: 8b0e…
+                    error:
+                      code: component_unavailable
+                      message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.'
+                      details:
+                        line_item_number: 1
+                        missing_component: Almondmilk
+                        failures:
+                          - reason: component_unavailable
+                            line_item_number: 1
+                            size: Grande
+                            drink: Caffè Latte
+                            missing_component: Almondmilk
+                            message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.'
+        '500':
+          description: internal_error
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '503':
+          description: |
+            stock_service_unavailable (hold call timed out / errored after one same-key retry;
+            no payment; release-by-key sent) | payment_status_unknown (hold kept, resolved on
+            retry or by reconciler). Retryable with the SAME order_id. Never used for refusals.
+          headers:
+            Retry-After: { schema: { type: integer, example: 1 } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /v1/orders/{order_id}:
+    get:
+      operationId: getOrder
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '404': { description: order_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+components:
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+  schemas:
+    OrderRequest:
+      type: object
+      description: Required fields are enforced by the service and reported as 400 invalid_order (not 422).
+      properties:
+        order_id: { type: string, minLength: 1, maxLength: 64 }
+        store_id: { type: string, description: 'Public store ID, e.g. SB-10482; kept as a string' }
+        submitted_at: { type: string, format: date-time }
+        drinks:
+          type: array
+          items: { $ref: '#/components/schemas/DrinkLine' }
+    DrinkLine:
+      type: object
+      properties:
+        drink: { type: string }
+        size: { type: string, enum: [Tall, Grande, Venti] }
+        milk: { type: string, description: '"None" for no milk' }
+        add_ins: { type: array, items: { type: string }, default: [] }
+        quantity: { type: integer, minimum: 1, maximum: 20 }
+        total_price: { type: number, description: Informational; not validated }
+    Order:
+      type: object
+      required: [order_id, store_id, status, drinks]
+      properties:
+        order_id: { type: string }
+        store_id: { type: string }
+        status:
+          type: string
+          enum: [accepted, refused, rejected, payment_declined, hold_unknown, payment_unknown]
+        drinks:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/DrinkLine'
+              - type: object
+                required: [line_item_number]
+                properties: { line_item_number: { type: integer, minimum: 1 } }
+    Failure:
+      type: object
+      required: [reason, line_item_number, size, drink, missing_component, message]
+      properties:
+        reason: { type: string, enum: [component_unavailable] }
+        line_item_number: { type: integer, minimum: 1 }
+        size: { type: string }
+        drink: { type: string }
+        missing_component: { type: string }
+        message: { type: string, description: '"Line <n>, <Size> <Drink>: <Component> is unavailable at this store right now."' }
+    ErrorEnvelope:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_order, unknown_store, store_closed, component_unavailable,
+                     order_id_conflict, payment_declined, stock_service_unavailable,
+                     payment_status_unknown, order_not_found, internal_error]
+            message: { type: string, minLength: 1, description: Customer-displayable; shown as-is by checkout }
+            details:
+              type: object
+              properties:
+                line_item_number: { type: integer, description: First failing line }
+                missing_component: { type: string, description: First failing component }
+                failures: { type: array, items: { $ref: '#/components/schemas/Failure' } }
+                store_id: { type: string }
+                store_name: { type: string }
+                field: { type: string, description: 'invalid_order: offending field' }
+                unrecognised: { type: array, items: { type: string } }
+                retryable: { type: boolean }

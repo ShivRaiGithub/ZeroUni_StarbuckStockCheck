@@ -1,0 +1,95 @@
+name: contract-tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    name: contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Everything the tests call (stock, order, gateway, fake payment) runs in-process inside
+      # this job. No network services are contacted. Skips, xfails, assert-free tests and
+      # "no tests collected" all fail this step (see tests/conftest.py).
+      - name: Run contract tests
+        run: pytest -v
+
+  # Builds the stock service image and tests the image itself (not the local process).
+  # Separate from the required contract-tests check.
+  stock-image:
+    name: stock-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the stock service image
+        run: docker build -f services/stock/Dockerfile -t stock-service:ci .
+
+      # Step 1: the image as shipped, started from the real committed StockSnapshot, healthy,
+      # with values checked against the hand calculation.
+      - name: Real-snapshot run against the image
+        env:
+          STOCK_IMAGE: stock-service:ci
+        run: pytest -v tests/contract/test_stock_snapshot.py
+
+      # Step 2: the 28 stock contract tests, one fresh container per test, each seeded with its
+      # own stock (race, refusals, expiry, idempotency).
+      - name: Stock contract tests against the image
+        env:
+          STOCK_IMAGE: stock-service:ci
+        run: pytest -v tests/contract/test_stock_contract.py
+
+  # Builds the order and stock images and runs the image test for plan.md line 75
+  # ("fail_saves never ships"). Separate from the required contract-tests check.
+  order-image:
+    name: order-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the stock and order images
+        run: |
+          docker build -f services/stock/Dockerfile -t stock-service:ci .
+          docker build -f services/order/Dockerfile -t order-service:ci .
+
+      - name: Order image refuses fail_saves and accepts an order when clean
+        env:
+          ORDER_IMAGE: order-service:ci
+          STOCK_IMAGE: stock-service:ci
+        run: pytest -v tests/image/test_order_image.py

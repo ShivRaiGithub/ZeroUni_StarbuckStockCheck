@@ -1,0 +1,383 @@
+openapi: 3.1.0
+info:
+  title: Store Stock Service
+  version: 1.0.0
+  description: |
+    Sole owner of quantity_on_hand, reserved_quantity and store_open. No other service has
+    database access or keeps a copy. Internal: called by the order service, never exposed through
+    the gateway.
+
+    available = quantity_on_hand - reserved_quantity. Reserved units are never sellable.
+
+    POST /v1/holds is the single authoritative "can this store make these line items right now"
+    check and the commit-time re-check (CLAUDE.md rule 7). In one transaction it:
+      1. expires overdue holds,
+      2. 404 unknown_store / 400 invalid_order (unknown drink, size, milk or add-in),
+      3. 409 store_closed if the store is closed (rule 4, takes precedence over stock),
+      4. needs per component = sum over lines of quantity x units per drink,
+      5. 409 component_unavailable listing EVERY short component if any has
+         available <= 0 (rules 5, 6) or 0 < available < need (rule 8); nothing is reserved,
+      6. otherwise adds every need to reserved_quantity (all-or-nothing). Stock never goes negative.
+    Every hold is confirmed, released, or expires on its own (expires_at); none stays forever.
+    The same Idempotency-Key with the same body replays the original response and never
+    reserves twice.
+
+    Envelope: { "error": { "code", "message", "details" }, "request_id" }. `message` here is
+    operator-facing; customer wording is produced by the order service.
+servers:
+  - url: http://stock:8000
+paths:
+  /v1/holds:
+    post:
+      operationId: createHold
+      summary: Atomically check and reserve every component of an order
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HoldRequest' }
+      responses:
+        '201':
+          description: Hold created (or replayed for the same Idempotency-Key and body)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hold' }
+        '400':
+          description: invalid_order (malformed body, unknown drink/size/milk/add-in) or invalid_expiry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: unknown_store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: |
+            store_closed | component_unavailable | idempotency_key_reused | hold_released.
+            Nothing is reserved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                store_closed:
+                  value:
+                    request_id: st-1
+                    error:
+                      code: store_closed
+                      message: Store SB-20516 is closed.
+                      details: [ { reason: store_closed, store_id: SB-20516, store_name: Bellevue Square } ]
+                component_unavailable:
+                  value:
+                    request_id: st-2
+                    error:
+                      code: component_unavailable
+                      message: 1 component short at SB-11937.
+                      details:
+                        - { reason: insufficient_quantity, line_item: 1, missing_component: Brown Sugar Syrup,
+                            component_type: add_in, needed: 4, available: 3 }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/holds/{hold_id}:
+    get:
+      operationId: getHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The hold
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hold' }
+        '404':
+          description: hold_not_found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/holds/{hold_id}/confirm:
+    post:
+      operationId: confirmHold
+      summary: Consume held stock (quantity_on_hand -= q, reserved_quantity -= q). Idempotent.
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Confirmed (or already confirmed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hold' }
+        '404':
+          description: hold_not_found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: hold_not_active (hold was released or expired)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/holds/{hold_id}/release:
+    post:
+      operationId: releaseHold
+      summary: Return held stock immediately (reserved_quantity -= q). Idempotent.
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Released (or already released or expired)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hold' }
+        '404':
+          description: hold_not_found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: hold_not_active (hold was already confirmed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/hold-releases:
+    post:
+      operationId: releaseHoldByKey
+      summary: Release the hold for an Idempotency-Key, or tombstone the key if none exists yet
+      description: |
+        Used after a createHold timeout, when the caller has no hold_id. A tombstoned key makes a
+        late-arriving createHold with that key return 409 hold_released without reserving.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              additionalProperties: false
+              properties:
+                idempotency_key: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        '200':
+          description: Released, tombstoned, or the hold was already closed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [idempotency_key, outcome]
+                properties:
+                  idempotency_key: { type: string }
+                  outcome: { type: string, enum: [released, tombstoned, already_closed] }
+                  hold_id: { type: [string, 'null'] }
+        '400':
+          description: invalid_request (missing or empty idempotency_key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/stores/{store_id}/availability:
+    get:
+      operationId: getAvailability
+      summary: Advisory per-component availability for menu display. NOT an order check.
+      description: May be stale by checkout (POS sales change quantity_on_hand directly). Only createHold decides.
+      parameters:
+        - $ref: '#/components/parameters/StoreId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Store status and availability
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [store_id, store_name, store_open, components]
+                properties:
+                  store_id: { type: string }
+                  store_name: { type: string }
+                  store_open: { type: boolean }
+                  components:
+                    type: array
+                    items:
+                      type: object
+                      required: [component_name, component_type, available, status]
+                      properties:
+                        component_name: { type: string }
+                        component_type: { type: string, enum: [drink_base, add_in] }
+                        available: { type: integer }
+                        status: { type: string, enum: ['IN STOCK', 'SOLD OUT'] }
+        '404':
+          description: unknown_store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/stock-adjustments:
+    post:
+      operationId: adjustStock
+      summary: POS / in-store feed changes quantity_on_hand (Store Inventory only)
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [store_id, component_name, delta]
+              additionalProperties: false
+              properties:
+                store_id: { type: string, pattern: '^SB-[0-9]+$' }
+                component_name: { type: string }
+                delta: { type: integer, description: Signed change to quantity_on_hand; result is floored at 0 }
+      responses:
+        '200':
+          description: New values for the row
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [store_id, component_name, quantity_on_hand, reserved_quantity, available]
+                properties:
+                  store_id: { type: string }
+                  component_name: { type: string }
+                  quantity_on_hand: { type: integer, minimum: 0 }
+                  reserved_quantity: { type: integer, minimum: 0 }
+                  available: { type: integer }
+        '400':
+          description: invalid_request (malformed body)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: unknown_store or unknown_component
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 'The order service sends "{order_id}:hold:{attempt}".'
+      schema: { type: string, minLength: 1, maxLength: 200 }
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+    HoldId:
+      name: hold_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^hold_[0-9A-Z]{26}$' }
+    StoreId:
+      name: store_id
+      in: path
+      required: true
+      description: Public store ID as a string; leading zeros kept (e.g. SB-09815).
+      schema: { type: string, pattern: '^SB-[0-9]+$' }
+  responses:
+    InternalError:
+      description: internal_error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    HoldRequest:
+      type: object
+      required: [store_id, lines, expires_at]
+      additionalProperties: false
+      properties:
+        store_id: { type: string, pattern: '^SB-[0-9]+$' }
+        expires_at:
+          type: string
+          format: date-time
+          description: 1 s to 600 s in the future, else 400 invalid_expiry. The order service sends now + 120 s.
+        lines:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [line_item, drink, size, milk, add_ins, quantity]
+            additionalProperties: false
+            properties:
+              line_item: { type: integer, minimum: 1 }
+              drink: { type: string }
+              size: { type: string, enum: [Tall, Grande, Venti] }
+              milk: { type: string, description: '"None" for no milk' }
+              add_ins: { type: array, items: { type: string } }
+              quantity: { type: integer, minimum: 1, maximum: 20 }
+    Hold:
+      type: object
+      required: [hold_id, store_id, status, expires_at, items]
+      properties:
+        hold_id: { type: string }
+        store_id: { type: string }
+        status: { type: string, enum: [active, confirmed, released, expired] }
+        expires_at: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [component_name, quantity]
+            properties:
+              component_name: { type: string }
+              quantity: { type: integer, minimum: 1 }
+    ErrorDetail:
+      type: object
+      required: [reason]
+      description: |
+        component_unavailable entries carry reason (base_out_of_stock | add_in_out_of_stock |
+        insufficient_quantity), line_item (lowest line using the component), missing_component,
+        component_type, needed, available. store_closed entries carry store_id and store_name.
+        invalid_order entries carry field, value, line_item.
+      properties:
+        reason:
+          type: string
+          enum: [base_out_of_stock, add_in_out_of_stock, insufficient_quantity, store_closed,
+                 unknown_store, unrecognised, missing_field, invalid_value, invalid_expiry]
+        line_item: { type: integer, minimum: 1 }
+        missing_component: { type: string }
+        component_type: { type: string, enum: [drink_base, add_in] }
+        needed: { type: integer, minimum: 1 }
+        available: { type: integer }
+        store_id: { type: string }
+        store_name: { type: string }
+        field: { type: string }
+        value: { type: string }
+    ErrorEnvelope:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum: [invalid_order, invalid_expiry, invalid_request, unknown_store, unknown_component,
+                     store_closed, component_unavailable, idempotency_key_reused, hold_released,
+                     hold_not_found, hold_not_active, internal_error]
+            message: { type: string, minLength: 1 }
+            details:
+              type: array
+              items: { $ref: '#/components/schemas/ErrorDetail' }

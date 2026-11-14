@@ -39,6 +39,9 @@ UPSTREAM = {
         [{"reason": "base_out_of_stock", "line_item": 1, "missing_component": "Almondmilk"},
          {"reason": "base_out_of_stock", "line_item": 2, "missing_component": "Oatmilk",
           "message": "Line 2, Venti Chai Tea Latte: Oatmilk is unavailable at this store right now."}])),
+    "409_order_refunded": (409, envelope(
+        "order_refunded", "We couldn't complete this order, so your payment has been refunded in full.",
+        [{"reason": "hold_expired_refunded", "order_id": "MO-1", "refunded": True}])),
     "503_stock_service_unavailable": (503, envelope(
         "stock_service_unavailable", "We couldn't check stock just now. Please try again shortly.",
         [{"reason": "stock_service_unavailable", "retryable": True}])),

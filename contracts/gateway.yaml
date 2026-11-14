@@ -64,7 +64,8 @@ paths:
         '409':
           description: |
             Refusal (pass-through, unchanged): store_closed (rule 4), component_unavailable
-            (rules 5-8), or order_id_conflict. Not retryable; no payment was requested.
+            (rules 5-8), or order_id_conflict, where no payment was requested; or order_refunded,
+            where the payment was refunded in full. Not retryable.
           headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
           content:
             application/json:
@@ -73,6 +74,7 @@ paths:
                   - $ref: './order-service.yaml#/components/schemas/StoreClosedError'
                   - $ref: './order-service.yaml#/components/schemas/ComponentUnavailableError'
                   - $ref: './order-service.yaml#/components/schemas/OrderIdConflictError'
+                  - $ref: './order-service.yaml#/components/schemas/OrderRefundedError'
               examples:
                 store_closed:
                   value:

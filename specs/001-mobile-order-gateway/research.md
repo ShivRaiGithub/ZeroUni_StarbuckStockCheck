@@ -140,9 +140,15 @@ release-by-key (R9), so a late-arriving first hold can't reserve stock. No retry
 or double-charge. Stock refusals are **always** 409 and are never mapped to 502/503/504.
 
 **Never "unavailable" after a charge**: the stock check (hold) is finished before payment starts.
-Once payment succeeds, the order is `accepted` no matter what the confirm call does. A failed
-confirm is retried in the background (every 2 s until success; the hold's 120 s TTL leaves lots of
-headroom). The hold already reserved the units, so confirm can't fail for lack of stock.
+A failed confirm is retried in the background every 2 s, with an alert if it is still pending
+after 60 s. While the hold is active, confirm can't fail for lack of stock. If the hold has
+**expired** (confirm returns 409 `hold_not_active`), the order service makes one fresh hold with
+key `{order_id}:rehold:{n}`, which is a new commit-time check. If it succeeds, confirm it and the
+order stays `accepted`. If it is refused, refund the charge (`{order_id}:refund`) and end as
+`refunded`, returning 409 `order_refunded`, whose message never says "unavailable". If the stock
+service can't be reached, retry in the background and refund 5 minutes after the charge.
+Superseded wording: "the 120 s TTL leaves lots of headroom" was true only while the order service
+stays up.
 
 **Payment call times out** (status unknown): the hold is **not** released, because the card may
 have been charged. The order goes to `payment_unknown` and the app gets 503

@@ -54,6 +54,35 @@ hold is **kept** (not released) and the caller gets **503** `payment_status_unkn
 retryable with the same `order_id`. If payment is declined, the hold is released immediately and the
 caller gets **402** `payment_declined`.
 
+### What the order does if the hold expires before confirm
+
+The hold alone protects the unit between the stock check and payment. Normally the order service
+does **not** recheck stock at confirm. It relies on the hold, which must still be `active`.
+
+1. **Prevent it.** Every path from hold to confirm must finish well inside the hold's 120 s
+   `expires_at`. The inline path takes at most about 2.6 s. A `payment_unknown` order is resolved
+   by the reconciler within 30 s, and a failed confirm is retried every 2 s. If a confirm is still
+   pending after 60 s (half the expiry), an alert fires.
+2. **Recheck if it happens anyway.** If confirm returns 409 `hold_not_active` after a charge, the
+   order service makes **one fresh hold** for the same lines (`Idempotency-Key`
+   `{order_id}:rehold:{n}`). That is a new commit-time stock check (rule 7), never a stale one. If it
+   succeeds, the order service confirms it and the order stays `accepted`. The customer sees
+   **201** `accepted` or, if the request has already returned, nothing changes. The card is
+   charged once.
+3. **Refund if the stock is gone.** If the fresh hold is refused (409 `component_unavailable` or
+   `store_closed`), the order service refunds the charge in full (`Idempotency-Key`
+   `{order_id}:refund`) and the order ends as `refunded`. The customer gets **409**
+   `order_refunded`, "We couldn't complete this order, so your payment has been refunded in full."
+   The contract forbids the word "unavailable" in that message, because a charged customer must
+   never see "unavailable" (ServiceBoundary, Mobile App Checkout). If the request has already
+   returned, `GET /v1/orders/{order_id}` shows `refunded` and the app tells the customer. The card
+   is refunded once, even if the order is repeated.
+4. **Stock service unreachable during the recheck.** The fresh hold follows the normal retry policy
+   in the background. If it is still unresolved 5 minutes after the charge, the order is refunded as
+   in step 3.
+
+The hold-expiry tests in `tests/contract/test_order_contract.py` cover steps 2 and 3.
+
 ## Technical Context
 
 **Language/Version**: Python 3.12 (CI). Local runs on 3.13 also collect cleanly.
@@ -212,8 +241,10 @@ and `test_app.py` (milk prototype) stay until the stock service replaces them.
    lives, the 503 for an unreachable order service, adopting the US4 codes in CLAUDE.md). C1
    (FR-013) is done; see below.
 4. **Not yet covered by contracts or tests**:
-   - what happens when the confirm call fails after a charge,
+   - a confirm that fails for a reason other than an expired hold (the expired-hold case is
+     covered above and by contract tests),
    - how a `payment_unknown` order is reconciled,
+   - the payment provider's real refund API (the tests use the fake's `POST /v1/refunds`),
    - the per-hop timeouts other than the gateway's 2.8 s,
    - acceptance tests for all 40 sample orders (SC-001).
    Specify them before or with the implementation.
@@ -226,3 +257,8 @@ and `test_app.py` (milk prototype) stay until the stock service replaces them.
   spec.md FR-013 and its clarification were amended to match. `contracts/stock-service.yaml`
   requires `expires_at` on every hold, and `tests/contract/` checks both the immediate release on
   payment decline and the expiry.
+- Closed the gap where a hold could expire after a charge but before confirm. The order service now
+  rechecks stock with one fresh hold. If that hold is refused, it refunds the charge and returns 409
+  `order_refunded`, never "unavailable". `contracts/order-service.yaml` and `contracts/gateway.yaml`
+  gained `order_refunded` and the `refunded` order status. See "What the order does if the hold
+  expires before confirm".

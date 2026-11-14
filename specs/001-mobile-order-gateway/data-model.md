@@ -102,6 +102,8 @@ Known sizes: `Tall`, `Grande`, `Venti`. Unknown drink, size, milk or add-in → 
 | `final_status_code` | INTEGER NULL | Stored HTTP status of the final result |
 | `final_body` | TEXT NULL | Stored JSON body, replayed on repeat |
 | `confirm_pending` | BOOLEAN | True until the stock confirm succeeds (background retry) |
+| `rehold_attempt` | INTEGER | 0, or n after a fresh hold `{order_id}:rehold:{n}` following an expired hold |
+| `refund_ref` | TEXT NULL | Opaque reference from the payment provider when the order was refunded |
 
 **Not stored**: any stock count, availability or store open flag.
 
@@ -129,9 +131,15 @@ Known sizes: `Tall`, `Grande`, `Venti`. Unknown drink, size, milk or add-in → 
 | `paying` | timeout | `payment_unknown` (hold kept) | **no** | 503 `payment_status_unknown` |
 | `payment_unknown` | retry or reconciler: charged / declined | `confirming` / `payment_declined` | — | — |
 | `paying`/`confirming` | charged | `accepted` | yes | 201 |
+| `confirming` | confirm 409 `hold_not_active` (hold expired) | `reholding` | — | — |
+| `reholding` | fresh hold 201, then confirm | `accepted` | yes | 201 |
+| `reholding` | fresh hold 409 (stock gone / store closed) | `refunded` (charge refunded) | yes | 409 `order_refunded` |
+| `reholding` | stock unreachable for 5 min after charge | `refunded` (charge refunded) | yes | 409 `order_refunded` |
 
 Invariant: no transition into `paying` exists except from a successful hold. So **payment is never
-requested for a refused order** (SC-002), and a refusal can never come after a charge.
+requested for a refused order** (SC-002), and a stock refusal (`store_closed`,
+`component_unavailable`) can never come after a charge. The only non-accepted end after a charge
+is `refunded` (409 `order_refunded`, full refund, never worded "unavailable").
 
 ---
 

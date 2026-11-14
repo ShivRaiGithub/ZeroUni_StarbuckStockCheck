@@ -24,6 +24,13 @@ info:
 
     order_id is the idempotency key: a repeat with the same body returns the original status and
     body; a repeat with a different body is 409 order_id_conflict.
+
+    Hold expired before confirm (after a charge): the order service makes ONE fresh hold (a new
+    commit-time stock check, Idempotency-Key "{order_id}:rehold:{n}"). If it succeeds the hold is
+    confirmed and the order stays accepted. If it is refused, the charge is refunded and the order
+    ends as `refunded`: 409 order_refunded, whose message never says "unavailable" (a charged
+    customer must never see "unavailable"). If the client is not waiting, the outcome is visible
+    through GET /v1/orders/{order_id}.
 servers:
   - url: http://order:8000
 paths:
@@ -124,6 +131,8 @@ components:
       description: |
         Order refused (CLAUDE.md rules 4-8) or order_id reused with a different body.
         Not retryable. No payment requested, nothing left reserved.
+        Also order_refunded: payment was taken, the hold expired before confirm, a fresh hold was
+        refused, and the payment was refunded in full. Final; not retryable.
       content:
         application/json:
           schema:
@@ -131,6 +140,7 @@ components:
               - $ref: '#/components/schemas/StoreClosedError'
               - $ref: '#/components/schemas/ComponentUnavailableError'
               - $ref: '#/components/schemas/OrderIdConflictError'
+              - $ref: '#/components/schemas/OrderRefundedError'
           examples:
             store_closed:
               summary: Rule 4 (MO-250303-0001)
@@ -195,6 +205,14 @@ components:
                   code: order_id_conflict
                   message: Order MO-250303-0003 was already submitted with different contents.
                   details: [ { reason: order_id_conflict, order_id: MO-250303-0003 } ]
+            order_refunded:
+              summary: Charged, hold expired before confirm, fresh hold refused, payment refunded
+              value:
+                request_id: req-13
+                error:
+                  code: order_refunded
+                  message: We couldn't complete this order, so your payment has been refunded in full.
+                  details: [ { reason: hold_expired_refunded, order_id: MO-250307-0023, refunded: true } ]
     PaymentDeclined:
       description: payment_declined. The stock hold was released immediately.
       content:
@@ -265,7 +283,7 @@ components:
         store_id: { type: string }
         status:
           type: string
-          enum: [accepted, refused, rejected, payment_declined, hold_unknown, payment_unknown]
+          enum: [accepted, refused, rejected, payment_declined, hold_unknown, payment_unknown, refunded]
         drinks:
           type: array
           items:
@@ -399,6 +417,30 @@ components:
                 properties:
                   reason: { const: order_id_conflict }
                   order_id: { type: string }
+    OrderRefundedError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: order_refunded }
+            message:
+              type: string
+              minLength: 1
+              description: Customer copy owned by Product. Must not say "unavailable" (ServiceBoundary, Mobile App Checkout).
+              not: { pattern: '[Uu][Nn][Aa][Vv][Aa][Ii][Ll][Aa][Bb][Ll][Ee]' }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason, order_id, refunded]
+                properties:
+                  reason: { const: hold_expired_refunded }
+                  order_id: { type: string }
+                  refunded: { const: true }
     PaymentDeclinedError:
       type: object
       required: [error, request_id]

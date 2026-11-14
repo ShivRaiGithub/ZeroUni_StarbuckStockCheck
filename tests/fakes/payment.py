@@ -7,6 +7,11 @@ Interface the order service must use:
       201 {"payment_id": str, "status": "charged"}
       402 {"status": "declined"}
 A repeated Idempotency-Key returns the original result and is not charged again.
+
+    POST /v1/refunds
+      headers: Idempotency-Key: "{order_id}:refund"
+      body:    {"order_id": str, "payment_id": str}
+      201 {"refund_id": str, "status": "refunded"}   (repeat key -> same result, refunded once)
 """
 from __future__ import annotations
 
@@ -19,7 +24,12 @@ class FakePayment:
         self.decline_order_ids = set(decline_order_ids or ())
         self.calls: list[dict] = []          # every request received
         self.charges: dict[str, dict] = {}   # idempotency key -> result
+        self.refunds: dict[str, dict] = {}   # idempotency key -> refund
         self.app = self._build()
+
+    @property
+    def refunded_order_ids(self) -> list[str]:
+        return [r["order_id"] for r in self.refunds.values()]
 
     @property
     def charged_order_ids(self) -> list[str]:
@@ -48,5 +58,14 @@ class FakePayment:
             if result["status"] == "declined":
                 return JSONResponse({"status": "declined"}, status_code=402)
             return JSONResponse({"payment_id": result["payment_id"], "status": "charged"}, status_code=201)
+
+        @app.post("/v1/refunds")
+        async def refund(request: Request, idempotency_key: str = Header(...)):
+            body = await request.json()
+            if idempotency_key not in self.refunds:
+                self.refunds[idempotency_key] = {"order_id": body.get("order_id"),
+                                                 "refund_id": f"ref_{len(self.refunds) + 1}"}
+            return JSONResponse({"refund_id": self.refunds[idempotency_key]["refund_id"],
+                                 "status": "refunded"}, status_code=201)
 
         return app

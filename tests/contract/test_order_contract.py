@@ -262,6 +262,84 @@ def test_payment_timeout_is_503_and_keeps_the_hold(tmp_path):
         assert (levels["reserved_quantity"], levels["available"]) == (1, 0), "hold kept while payment unknown"
 
 
+# ------------------------------------------------------------------ hold expired before confirm
+
+HOLD_A = "hold_" + "A" * 26
+HOLD_B = "hold_" + "B" * 26
+
+
+def _expired_hold_stub(rehold_outcome):
+    """Stock stub: the first hold expires before confirm (409 hold_not_active).
+
+    rehold_outcome: "available" -> the fresh hold succeeds; "gone" -> the fresh hold is refused.
+    """
+    calls = []
+
+    def hold(hold_id):
+        return {"hold_id": hold_id, "store_id": "SB-10482", "status": "active",
+                "expires_at": "2030-01-01T00:00:00Z", "items": [{"component_name": "Oatmilk", "quantity": 1}]}
+
+    def handler(request: httpx.Request):
+        calls.append(request)
+        path, key = request.url.path, request.headers.get("Idempotency-Key", "")
+        if path == "/v1/holds" and ":rehold:" not in key:
+            return httpx.Response(201, json=hold(HOLD_A))
+        if path == "/v1/holds":
+            if rehold_outcome == "available":
+                return httpx.Response(201, json=hold(HOLD_B))
+            return httpx.Response(409, json={"request_id": "s", "error": {
+                "code": "component_unavailable", "message": "1 component short at SB-10482.",
+                "details": [{"reason": "base_out_of_stock", "line_item": 1, "missing_component": "Oatmilk",
+                             "component_type": "drink_base", "needed": 1, "available": 0}]}})
+        if path == f"/v1/holds/{HOLD_A}/confirm":
+            return httpx.Response(409, json={"request_id": "s", "error": {
+                "code": "hold_not_active", "message": "Hold expired.", "details": []}})
+        if path == f"/v1/holds/{HOLD_B}/confirm":
+            return httpx.Response(200, json={**hold(HOLD_B), "status": "confirmed"})
+        if path.endswith("/release") or path == "/v1/hold-releases":
+            return httpx.Response(200, json={"idempotency_key": key, "outcome": "already_closed", "hold_id": None})
+        return httpx.Response(404, json={"request_id": "s", "error": {"code": "hold_not_found",
+                                                                       "message": "no", "details": []}})
+
+    return calls, handler
+
+
+def test_hold_expired_before_confirm_fresh_hold_keeps_order_accepted(tmp_path):
+    # Charged, then confirm finds the hold expired. A fresh hold (the commit-time recheck)
+    # succeeds, so the customer still gets accepted, charged exactly once, never refunded.
+    calls, handler = _expired_hold_stub("available")
+    with order_service(tmp_path, stock_client=mock_client(handler, "http://stock")) as env:
+        r = place(env, order_body("MO-C-0018", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk")))
+        body = ORDER.check(r)
+        assert r.status_code == 201
+        assert body["status"] == "accepted"
+        assert env.payment.calls_for("MO-C-0018") == 1
+        assert env.payment.refunded_order_ids == []
+        hold_keys = [c.headers["Idempotency-Key"] for c in calls if c.url.path == "/v1/holds"]
+        assert len(hold_keys) == 2
+        assert ":rehold:" in hold_keys[1] and hold_keys[1] != hold_keys[0]
+        assert [c.url.path for c in calls if c.url.path.endswith("/confirm")] == [
+            f"/v1/holds/{HOLD_A}/confirm", f"/v1/holds/{HOLD_B}/confirm"]
+
+
+def test_hold_expired_and_stock_gone_refunds_and_never_says_unavailable(tmp_path):
+    # Charged, hold expired, and the fresh hold is refused: refund in full, 409 order_refunded.
+    calls, handler = _expired_hold_stub("gone")
+    with order_service(tmp_path, stock_client=mock_client(handler, "http://stock")) as env:
+        r = place(env, order_body("MO-C-0019", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk")))
+        body = ORDER.check(r)
+        assert r.status_code == 409
+        assert body["error"]["code"] == "order_refunded"
+        assert "unavailable" not in body["error"]["message"].lower()
+        assert env.payment.calls_for("MO-C-0019") == 1
+        assert env.payment.refunded_order_ids == ["MO-C-0019"]
+        got = env.order.get("/v1/orders/MO-C-0019")
+        assert ORDER.check(got)["status"] == "refunded"
+        repeat = place(env, order_body("MO-C-0019", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk")))
+        assert ORDER.check(repeat) == body
+        assert env.payment.refunded_order_ids == ["MO-C-0019"], "refunded once, not again on repeat"
+
+
 # ------------------------------------------------------------------ GET /v1/orders/{order_id}
 
 def test_get_order_200_and_404(tmp_path):

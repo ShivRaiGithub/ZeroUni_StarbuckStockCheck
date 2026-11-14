@@ -539,3 +539,124 @@ def test_get_order_200_and_404(tmp_path):
         missing = env.order.get("/v1/orders/MO-NOPE")
         assert ORDER.check(missing)["error"]["code"] == "order_not_found"
         assert missing.status_code == 404
+
+
+# ------------------------------------------------------------------ FR-002: every unrecognised name
+
+def test_every_unrecognised_name_is_listed_and_the_whole_order_rejected(tmp_path):
+    # FR-002: unknown drink, size, milk and add-in on one order. The whole order is rejected,
+    # each bad name is listed, and nothing is reserved or paid.
+    with order_service(tmp_path, seed()) as env:
+        r = place(env, order_body("MO-C-0030", "SB-10482",
+                                  line("Caffè Latte", "Grande", "2% Milk"),
+                                  line("Mocha Frappe Supreme", "Gigantic", "Camel Milk", ["Vanila Syrup"])))
+        body = ORDER.check(r)
+        assert r.status_code == 400
+        assert body["error"]["code"] == "invalid_order"
+        assert body["error"]["message"] == ("Unrecognised drink: Mocha Frappe Supreme. Unrecognised size: Gigantic. "
+                                            "Unrecognised milk: Camel Milk. Unrecognised add-in: Vanila Syrup.")
+        assert [(d["field"], d["value"], d["line_item"]) for d in body["error"]["details"]] == [
+            ("drink", "Mocha Frappe Supreme", 2), ("size", "Gigantic", 2),
+            ("milk", "Camel Milk", 2), ("add_ins", "Vanila Syrup", 2)]
+        assert env.payment.calls == []
+        assert stock_levels(env.stock, "SB-10482", "2% Milk")["reserved_quantity"] == 0, "line 1 not processed alone"
+
+
+# ------------------------------------------------------------------ FR-009 / FR-012: call order
+
+class _Recorder(httpx.AsyncBaseTransport):
+    """Delegates to `inner` and logs (service, METHOD, path) for every outgoing request."""
+
+    def __init__(self, service, inner, log):
+        self.service, self.inner, self.log = service, inner, log
+
+    async def handle_async_request(self, request):
+        self.log.append((self.service, request.method, request.url.path))
+        return await self.inner.handle_async_request(request)
+
+
+def _recorded_order_service(tmp_path, rows, log, payment=None):
+    from tests.contract.harness import load_service
+    stock_app = load_service("stock").create_app(db_path=str(tmp_path / "stock.db"), seed_rows=rows)
+    payment = payment or FakePayment()
+    stock_client = httpx.AsyncClient(
+        transport=_Recorder("stock", httpx.ASGITransport(app=stock_app), log), base_url="http://stock")
+    payment_client = httpx.AsyncClient(
+        transport=_Recorder("payment", httpx.ASGITransport(app=payment.app), log), base_url="http://payment")
+    return order_service(tmp_path, stock_client=stock_client, payment_client=payment_client, payment=payment)
+
+
+def test_payment_requested_only_after_hours_and_stock_checks_pass(tmp_path):
+    # FR-009 / US1 scenario 4: hold (hours + stock check) succeeds -> payment -> confirm, in that
+    # order. A refused order (closed store, sold-out milk) never reaches payment.
+    log = []
+    rows = seed({"10482": {"Almondmilk": (0, 0)}})
+    with _recorded_order_service(tmp_path, rows, log) as env:
+        ok = place(env, order_body("MO-C-0031", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk")))
+        assert ORDER.check(ok)["status"] == "accepted"
+        steps = [(svc, path) for svc, _, path in log]
+        hold = steps.index(("stock", "/v1/holds"))
+        pay = steps.index(("payment", "/v1/payments"))
+        confirm = next(i for i, (svc, path) in enumerate(steps) if path.endswith("/confirm"))
+        assert hold < pay < confirm, f"expected hold -> payment -> confirm, got {steps}"
+        assert sum(1 for s in steps if s == ("payment", "/v1/payments")) == 1
+
+        for order_id, store, milk in (("MO-C-0032", "SB-20516", "Oatmilk"),
+                                      ("MO-C-0033", "SB-10482", "Almondmilk")):
+            log.clear()
+            r = place(env, order_body(order_id, store, line("Caffè Latte", "Grande", milk)))
+            assert ORDER.check(r)["error"]["code"] in ("store_closed", "component_unavailable")
+            assert r.status_code == 409
+            assert not any(svc == "payment" for svc, _, _ in log), f"{order_id} reached payment: {log}"
+
+
+def test_order_service_reaches_stock_only_through_its_contract_and_keeps_no_stock_data(tmp_path):
+    # FR-012 (ServiceBoundary): the order service talks to stock only via operations in
+    # contracts/stock-service.yaml, keeps its own database, and holds no stock columns.
+    import sqlite3
+    from pathlib import Path
+
+    log = []
+    with _recorded_order_service(tmp_path, seed({"10482": {"Oatmilk": (0, 0)}}), log) as env:
+        ORDER.check(place(env, order_body("MO-C-0034", "SB-10482", line("Caffè Latte", "Grande", "2% Milk"))))
+        ORDER.check(place(env, order_body("MO-C-0035", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk"))))
+        ORDER.check(place(env, order_body("MO-C-0036", "SB-20516", line("Caffè Latte", "Grande", "2% Milk"))))
+    stock_calls = [(m, p) for svc, m, p in log if svc == "stock"]
+    assert stock_calls, "the order service must ask the stock service, not decide on its own"
+    for method, path in stock_calls:
+        STOCK.operation(method, path)  # raises if the call is not in the stock contract
+
+    with sqlite3.connect(tmp_path / "order.db") as db:
+        tables = [t for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        columns = {c[1] for t in tables for c in db.execute(f"PRAGMA table_info('{t}')")}
+    assert tables, "the order service keeps its own data"
+    assert not columns & {"quantity_on_hand", "reserved_quantity", "store_open"}, columns
+
+    source = "\n".join(p.read_text(encoding="utf-8")
+                       for p in (Path(__file__).resolve().parents[2] / "services/order/app").glob("*.py"))
+    for forbidden in ("services.stock", "_svc_stock", "stock.db", "StockSnapshot"):
+        assert forbidden not in source, f"order service source references {forbidden!r}"
+
+
+# ------------------------------------------------------------------ SC-003: answer within 2 seconds
+
+def test_p95_answer_within_two_seconds(tmp_path):
+    # SC-003: 95% of orders get an accept or refuse answer within 2 s under normal load.
+    # 40 sequential orders (accepted, closed store, sold out) through order -> stock -> fake payment,
+    # in-process. This bounds the services' own work; it does not measure network or a real provider.
+    import time
+
+    shapes = [("SB-10482", "2% Milk", 201), ("SB-20516", "2% Milk", 409), ("SB-10482", "Almondmilk", 409),
+              ("SB-11937", "Oatmilk", 201)]
+    timings = []
+    with order_service(tmp_path, seed({"10482": {"Almondmilk": (0, 0)}})) as env:
+        for i in range(40):
+            store, milk, expected = shapes[i % len(shapes)]
+            start = time.perf_counter()
+            r = place(env, order_body(f"MO-C-{100 + i:04d}", store, line("Caffè Latte", "Grande", milk)))
+            timings.append(time.perf_counter() - start)
+            ORDER.check(r)
+            assert r.status_code == expected
+    timings.sort()
+    p95 = timings[int(0.95 * len(timings)) - 1]
+    assert p95 < 2.0, f"p95 {p95:.3f}s exceeds 2 s"

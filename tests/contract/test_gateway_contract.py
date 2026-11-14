@@ -125,7 +125,7 @@ def test_order_service_unreachable_is_503_never_502_or_504(handler):
         body = GATEWAY.check(r)
         assert r.status_code == 503
         assert body["error"]["code"] == "order_service_unavailable"
-        assert body["error"]["message"]
+        assert "try again shortly" in body["error"]["message"].lower(), "FR-015 wording"
         assert int(r.headers["Retry-After"]) >= 1
 
 

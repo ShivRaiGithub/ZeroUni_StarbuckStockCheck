@@ -72,14 +72,29 @@ does **not** recheck stock at confirm. It relies on the hold, which must still b
 3. **Refund if the stock is gone.** If the fresh hold is refused (409 `component_unavailable` or
    `store_closed`), the order service refunds the charge in full (`Idempotency-Key`
    `{order_id}:refund`) and the order ends as `refunded`. The customer gets **409**
-   `order_refunded`, "We couldn't complete this order, so your payment has been refunded in full."
-   The contract forbids the word "unavailable" in that message, because a charged customer must
-   never see "unavailable" (ServiceBoundary, Mobile App Checkout). If the request has already
-   returned, `GET /v1/orders/{order_id}` shows `refunded` and the app tells the customer. The card
-   is refunded once, even if the order is repeated.
+   `order_refunded` with this message:
+   "We've refunded your payment in full. <Component> ran out before we could make your order. Please try again with a different option."
+   `<Component>` is filled from `error.details[0].missing_component`, which is the component the
+   refused fresh hold reported as short. `details[]` lists every short component, each with
+   `reason: component_ran_out`, `line_item` and `missing_component`. If the fresh hold was refused
+   with `store_closed` instead, the message is "We've refunded your payment in full.
+   <Store Name> closed before we could make your order.", with `<Store Name>` taken from
+   `error.details[0].store_name`. If the request has already returned,
+   `GET /v1/orders/{order_id}` shows `refunded` and the app tells the customer. The card is
+   refunded once, even if the order is repeated.
 4. **Stock service unreachable during the recheck.** The fresh hold follows the normal retry policy
-   in the background. If it is still unresolved 5 minutes after the charge, the order is refunded as
-   in step 3.
+   in the background. If it is still unresolved 5 minutes after the charge, the order is refunded
+   with the message "We've refunded your payment in full. We couldn't make your order right now.
+   Please try again shortly." (`reason: stock_unreachable`).
+
+**Rule for charged orders (overrides the CLAUDE.md rules 5–8 wording).** CLAUDE.md rules 5–8 set
+the "… is unavailable at this store right now." message for orders refused **before** payment.
+After a charge, `ServiceBoundary` (Mobile App Checkout) requires that "A customer must never see
+'unavailable' after their card has been charged." That hard constraint wins for charged orders, so
+the refund messages above say "ran out" or "closed" and **never** "unavailable". The order service
+contract enforces this: `OrderRefundedError.message` must not match "unavailable". Uncharged
+refusals keep the exact CLAUDE.md wording. Open item: add this exception to CLAUDE.md as a rule 9,
+which needs the project owner's approval.
 
 The hold-expiry tests in `tests/contract/test_order_contract.py` cover steps 2 and 3.
 

@@ -330,7 +330,12 @@ def test_hold_expired_and_stock_gone_refunds_and_never_says_unavailable(tmp_path
         body = ORDER.check(r)
         assert r.status_code == 409
         assert body["error"]["code"] == "order_refunded"
+        assert body["error"]["message"] == (
+            "We've refunded your payment in full. Oatmilk ran out before we could make your order. "
+            "Please try again with a different option.")
         assert "unavailable" not in body["error"]["message"].lower()
+        assert [(d["reason"], d["line_item"], d["missing_component"]) for d in body["error"]["details"]] == [
+            ("component_ran_out", 1, "Oatmilk")]
         assert env.payment.calls_for("MO-C-0019") == 1
         assert env.payment.refunded_order_ids == ["MO-C-0019"]
         got = env.order.get("/v1/orders/MO-C-0019")

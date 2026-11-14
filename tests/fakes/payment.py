@@ -69,3 +69,8 @@ class FakePayment:
                                  "status": "refunded"}, status_code=201)
 
         return app
+
+
+# Module-level app so the fake can also run as its own container in the image tests:
+#   uvicorn payment:app --app-dir /fakes
+app = FakePayment().app

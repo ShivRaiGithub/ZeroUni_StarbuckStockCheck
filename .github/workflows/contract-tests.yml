@@ -64,3 +64,32 @@ jobs:
         env:
           STOCK_IMAGE: stock-service:ci
         run: pytest -v tests/contract/test_stock_contract.py
+
+  # Builds the order and stock images and runs the image test for plan.md line 75
+  # ("fail_saves never ships"). Separate from the required contract-tests check.
+  order-image:
+    name: order-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the stock and order images
+        run: |
+          docker build -f services/stock/Dockerfile -t stock-service:ci .
+          docker build -f services/order/Dockerfile -t order-service:ci .
+
+      - name: Order image refuses fail_saves and accepts an order when clean
+        env:
+          ORDER_IMAGE: order-service:ci
+          STOCK_IMAGE: stock-service:ci
+        run: pytest -v tests/image/test_order_image.py

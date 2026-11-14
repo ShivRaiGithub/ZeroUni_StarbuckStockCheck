@@ -98,6 +98,24 @@ def test_rule5_base_out_of_stock(tmp_path):
         assert stock_levels(env.stock, "SB-10482", "Vanilla Syrup")["reserved_quantity"] == 0
 
 
+def test_rule5_first_hill_oat_milk_sold_out_refuses_the_whole_order(tmp_path):
+    # MO-250307-0029, the case the project is built around: First Hill (SB-10482), Venti Iced Brown
+    # Sugar Oatmilk Shaken Espresso, Oatmilk on hand 0, reserved 0 -> available 0. Brown Sugar Syrup
+    # and Extra Shot are in stock (50), so Oatmilk is the only thing named.
+    with order_service(tmp_path, seed({"10482": {"Oatmilk": (0, 0)}})) as env:
+        r = place(env, order_body("MO-250307-0029", "SB-10482",
+                                  line(SHAKEN, "Venti", "Oatmilk", ["Brown Sugar Syrup", "Extra Shot"])))
+        body = assert_refused(
+            env, r, "MO-250307-0029", "component_unavailable",
+            f"Line 1, Venti {SHAKEN}: Oatmilk is unavailable at this store right now.")
+        assert [(d["reason"], d["line_item"], d["missing_component"]) for d in body["error"]["details"]] == [
+            ("base_out_of_stock", 1, "Oatmilk")]
+        assert "Brown Sugar Syrup" not in r.text and "Extra Shot" not in r.text
+        for comp in ("Oatmilk", "Brown Sugar Syrup", "Extra Shot"):
+            assert stock_levels(env.stock, "SB-10482", comp)["reserved_quantity"] == 0, comp
+        assert stock_levels(env.stock, "SB-10482", "Oatmilk")["quantity_on_hand"] == 0
+
+
 def test_rule6_add_in_out_of_stock_never_dropped(tmp_path):
     # MO-250306-0019: Caramel Drizzle available 0, Vanilla Syrup available 50.
     with order_service(tmp_path, seed({"10482": {"Caramel Drizzle": (0, 0)}})) as env:

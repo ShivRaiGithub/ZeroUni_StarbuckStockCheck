@@ -6,10 +6,8 @@ available = quantity_on_hand - reserved_quantity.
 import asyncio
 import time
 
-from fastapi.testclient import TestClient
-
-from tests.contract.harness import (asgi_client, hold_body, line, load_service, seed,
-                                    stock_levels, stock_service)
+from tests.contract.harness import (async_client_for, hold_body, line, seed, stock_levels,
+                                    stock_service)
 from tests.contract.openapi_check import STOCK
 
 LATTE_OAT = line("Caffè Latte", "Grande", "Oatmilk")
@@ -155,22 +153,20 @@ def test_every_failing_line_is_listed(tmp_path):
 
 def test_concurrent_holds_for_last_unit_exactly_one_wins(tmp_path):
     # Oatmilk available 1; 10 different orders race for it. Stock must never go negative.
-    app = load_service("stock").create_app(db_path=str(tmp_path / "stock.db"),
-                                           seed_rows=seed({"10482": {"Oatmilk": (1, 0)}}))
+    with stock_service(tmp_path, seed({"10482": {"Oatmilk": (1, 0)}})) as c:
+        async def race():
+            async with async_client_for(c) as client:
+                return await asyncio.gather(*[
+                    client.post("/v1/holds", json=hold_body("SB-10482", LATTE_OAT),
+                                headers={"Idempotency-Key": f"race-{i}:hold:1"}) for i in range(10)])
 
-    async def race():
-        async with asgi_client(app, "http://stock") as client:
-            return await asyncio.gather(*[
-                client.post("/v1/holds", json=hold_body("SB-10482", LATTE_OAT),
-                            headers={"Idempotency-Key": f"race-{i}:hold:1"}) for i in range(10)])
-
-    responses = asyncio.run(race())
-    for r in responses:
-        STOCK.check(r)
-    statuses = sorted(r.status_code for r in responses)
-    assert statuses == [201] + [409] * 9
-    levels = stock_levels(TestClient(app), "SB-10482", "Oatmilk")
-    assert (levels["quantity_on_hand"], levels["reserved_quantity"], levels["available"]) == (1, 1, 0)
+        responses = asyncio.run(race())
+        for r in responses:
+            STOCK.check(r)
+        statuses = sorted(r.status_code for r in responses)
+        assert statuses == [201] + [409] * 9
+        levels = stock_levels(c, "SB-10482", "Oatmilk")
+        assert (levels["quantity_on_hand"], levels["reserved_quantity"], levels["available"]) == (1, 1, 0)
 
 
 def test_same_key_different_body_is_rejected(tmp_path):

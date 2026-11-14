@@ -310,7 +310,7 @@ components:
         expires_at:
           type: string
           format: date-time
-          description: 1 s to 600 s in the future, else 400 invalid_expiry. The order service sends now + 120 s.
+          description: In the future and at most 600 s ahead, else 400 invalid_expiry. The order service sends now + 120 s.
         lines:
           type: array
           minItems: 1

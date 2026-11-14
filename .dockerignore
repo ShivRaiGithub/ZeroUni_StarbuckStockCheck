@@ -1,0 +1,10 @@
+# Keep the build context small and free of local state; each Dockerfile copies only what it needs.
+.git
+.venv
+.claude
+.specify
+.pytest_cache
+**/__pycache__
+*.pyc
+specs
+tests

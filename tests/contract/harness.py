@@ -23,9 +23,13 @@ Each app/ directory is a package (has __init__.py) and uses relative imports int
 """
 from __future__ import annotations
 
+import csv
 import importlib
 import importlib.util
+import os
+import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -155,11 +159,60 @@ def order_body(order_id: str, store_id: str, *drinks: dict) -> dict:
 
 # ---------------------------------------------------------------- environments
 
+# Container mode: set STOCK_IMAGE (e.g. stock-service:test) and every stock_service() call starts a
+# fresh container of that image, seeded with the test's own rows via a mounted snapshot file, and
+# the test talks to it over HTTP on 127.0.0.1. Unset (the default, and CI), it runs in-process.
+STOCK_IMAGE = os.environ.get("STOCK_IMAGE")
+CONTAINER_START_SECONDS = 30
+
+
+@contextmanager
+def _stock_container(tmp_path: Path, rows: list[dict]):
+    snapshot = tmp_path / "StockSnapshot"
+    with snapshot.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    snapshot.chmod(0o644)
+    cid = subprocess.run(
+        ["docker", "run", "-d", "-p", "127.0.0.1::8000",
+         "-v", f"{snapshot}:/seed/StockSnapshot:ro", "-e", "STOCK_SNAPSHOT_PATH=/seed/StockSnapshot",
+         STOCK_IMAGE], check=True, capture_output=True, text=True).stdout.strip()
+    try:
+        mapping = subprocess.run(["docker", "port", cid, "8000/tcp"], check=True,
+                                 capture_output=True, text=True).stdout.split()[0]
+        url = "http://" + mapping
+        deadline = time.monotonic() + CONTAINER_START_SECONDS
+        while True:
+            try:
+                httpx.get(url + "/v1/stores/SB-10482/availability", timeout=1)
+                break
+            except httpx.TransportError:
+                if time.monotonic() > deadline:
+                    logs = subprocess.run(["docker", "logs", cid], capture_output=True, text=True)
+                    pytest.fail(f"stock container did not start:\n{logs.stdout}{logs.stderr}", pytrace=False)
+                time.sleep(0.2)
+        yield url
+    finally:
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True)
+
+
 @contextmanager
 def stock_service(tmp_path: Path, rows: list[dict]):
+    if STOCK_IMAGE:
+        with _stock_container(tmp_path, rows) as url, httpx.Client(base_url=url, timeout=10) as client:
+            yield client
+        return
     app = load_service("stock").create_app(db_path=str(tmp_path / "stock.db"), seed_rows=rows)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
+
+
+def async_client_for(client) -> httpx.AsyncClient:
+    """An async client that reaches the same stock service as `client` (in-process or container)."""
+    if isinstance(client, TestClient):
+        return asgi_client(client.app, "http://stock")
+    return httpx.AsyncClient(base_url=str(client.base_url), timeout=10)
 
 
 def stock_levels(stock_client: TestClient, store_id: str, component: str) -> dict:

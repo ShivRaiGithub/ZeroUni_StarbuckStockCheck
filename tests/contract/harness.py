@@ -77,6 +77,10 @@ COMPONENTS = {
     # name: (component_id, component_type)
     "2% Milk": ("two_pct_milk", "drink_base"),
     "Whole Milk": ("whole_milk", "drink_base"),
+    "Nonfat Milk": ("nonfat_milk", "drink_base"),
+    "Soymilk": ("soy_milk", "drink_base"),
+    "Coconutmilk": ("coconut_milk", "drink_base"),
+    "Cinnamon Dolce Topping": ("cinnamon_dolce_topping", "add_in"),
     "Almondmilk": ("almond_milk", "drink_base"),
     "Oatmilk": ("oat_milk", "drink_base"),
     "Vanilla Syrup": ("vanilla_syrup", "add_in"),

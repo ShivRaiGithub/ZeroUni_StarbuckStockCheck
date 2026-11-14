@@ -54,6 +54,30 @@ hold is **kept** (not released) and the caller gets **503** `payment_status_unkn
 retryable with the same `order_id`. If payment is declined, the hold is released immediately and the
 caller gets **402** `payment_declined`.
 
+### Save before send: attempts, retries, restarts and failed saves
+
+- **Save before send.** The order service saves the attempt number n to its own database before it
+  sends hold key `{order_id}:hold:n`. It saves the hold result and the `paying` state before it
+  calls payment. So every key below the saved attempt is already released, and no key above it was
+  ever sent.
+- **If a save fails, nothing is sent.** The order service sends **no request to the stock service
+  and none to payment** for that request. It returns **503** `order_storage_unavailable`, "We
+  couldn't take your order just now. Please try again shortly.", with `Retry-After: 1`. This is
+  not a refusal. A retry with the same `order_id` is safe: whatever was not saved was never sent,
+  so the retry continues from the last saved attempt (attempt 1 if nothing was saved).
+- **Release before retry.** Before placing hold attempt n+1, the order service must get a 200 from
+  `POST /v1/hold-releases` for attempt n's key. If it cannot, it returns 503
+  `stock_service_unavailable` and sends no new hold.
+- **Restart.** On restart, the order service releases the saved attempt's key (until it gets a
+  200) before placing any new hold. A startup sweep does this for every order left in `holding`
+  or `hold_unknown`, without waiting for the app to retry. Each hold's 120 s expiry is the last
+  backstop.
+- **`fail_saves` never ships.** `fail_saves` is a test-only `create_app` argument; the image entry point (`create_app_from_env`) always passes `None`, never reads it from the environment, a header or config, and refuses to start, logging why, if any `FAIL_SAVES` or `ORDER_FAIL*` environment variable is set. Proof (held until the order image exists and both are green against it): an image test that starts the shipped image with those variables set and asserts it refuses to start, then starts it clean and asserts an order is accepted; and a code test that asserts the entry point passes `fail_saves=None` and never reads it from the environment.
+- **Tests:** `tests/contract/test_order_contract.py` covers these four rules:
+  `test_failed_save_sends_nothing_and_returns_503`,
+  `test_release_timeout_blocks_the_next_hold`, and
+  `test_restart_releases_saved_attempt_before_next_hold`.
+
 ### What the order does if the hold expires before confirm
 
 The hold alone protects the unit between the stock check and payment. Normally the order service

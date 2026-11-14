@@ -12,9 +12,16 @@ How each service must be buildable (this is what the implementation has to provi
 
   services/order/app/main.py
       create_app(*, db_path: str, stock_client: httpx.AsyncClient,
-                 payment_client: httpx.AsyncClient) -> FastAPI
+                 payment_client: httpx.AsyncClient,
+                 fail_saves: Callable[[str], bool] | None = None) -> FastAPI
       Calls the stock service at relative paths (/v1/holds, ...) through stock_client and the
       payment provider through payment_client (see tests/fakes/payment.py for that interface).
+      fail_saves is a test-only fault hook: before each durable save the service calls
+      fail_saves(<save point>) and, if it returns True, treats the save as failed (as if the disk
+      refused the write). Save points: "order" (the order record), "attempt" (hold attempt n,
+      saved before key {order_id}:hold:n is sent), "hold_result", "paying".
+      The service keeps its state only in db_path, so a second create_app on the same db_path is a
+      restart.
 
   services/gateway/app/main.py
       create_app(*, order_client: httpx.AsyncClient) -> FastAPI
@@ -33,6 +40,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 import httpx
 import pytest
@@ -208,6 +216,49 @@ def stock_service(tmp_path: Path, rows: list[dict]):
         yield client
 
 
+SNAPSHOT_PATH = ROOT / "StockSnapshot"
+HEALTHY_WITHIN_SECONDS = 45
+
+
+def snapshot_rows() -> list[dict]:
+    with SNAPSHOT_PATH.open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+@contextmanager
+def snapshot_stock_service(tmp_path: Path):
+    """The stock service started from the real, committed StockSnapshot. Yields (client, health).
+
+    Container mode: runs the image exactly as shipped (its baked-in snapshot, no mount) and waits
+    for Docker's healthcheck to report "healthy". In-process mode: health is "in-process".
+    """
+    if not STOCK_IMAGE:
+        app = load_service("stock").create_app(db_path=str(tmp_path / "stock.db"), seed_rows=snapshot_rows())
+        with TestClient(app, raise_server_exceptions=False) as client:
+            yield client, "in-process"
+        return
+    cid = subprocess.run(["docker", "run", "-d", "-p", "127.0.0.1::8000", STOCK_IMAGE],
+                         check=True, capture_output=True, text=True).stdout.strip()
+    try:
+        deadline = time.monotonic() + HEALTHY_WITHIN_SECONDS
+        while True:
+            health = subprocess.run(["docker", "inspect", "-f", "{{.State.Health.Status}}", cid],
+                                    capture_output=True, text=True).stdout.strip()
+            if health == "healthy":
+                break
+            if health == "unhealthy" or time.monotonic() > deadline:
+                logs = subprocess.run(["docker", "logs", cid], capture_output=True, text=True)
+                pytest.fail(f"stock container is {health or 'not running'}:\n{logs.stdout}{logs.stderr}",
+                            pytrace=False)
+            time.sleep(0.5)
+        mapping = subprocess.run(["docker", "port", cid, "8000/tcp"], check=True,
+                                 capture_output=True, text=True).stdout.split()[0]
+        with httpx.Client(base_url="http://" + mapping, timeout=10) as client:
+            yield client, health
+    finally:
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True)
+
+
 def async_client_for(client) -> httpx.AsyncClient:
     """An async client that reaches the same stock service as `client` (in-process or container)."""
     if isinstance(client, TestClient):
@@ -233,7 +284,8 @@ class OrderEnv:
 @contextmanager
 def order_service(tmp_path: Path, rows: list[dict] | None = None, *, payment=None,
                   stock_client: httpx.AsyncClient | None = None,
-                  payment_client: httpx.AsyncClient | None = None):
+                  payment_client: httpx.AsyncClient | None = None,
+                  fail_saves: Callable[[str], bool] | None = None):
     """Order service wired to the real stock service (or a stub) and the fake payment app."""
     from tests.fakes.payment import FakePayment
 
@@ -247,7 +299,8 @@ def order_service(tmp_path: Path, rows: list[dict] | None = None, *, payment=Non
     if payment_client is None:
         payment_client = asgi_client(payment.app, "http://payment")
     order_app = load_service("order").create_app(
-        db_path=str(tmp_path / "order.db"), stock_client=stock_client, payment_client=payment_client)
+        db_path=str(tmp_path / "order.db"), stock_client=stock_client, payment_client=payment_client,
+        fail_saves=fail_saves)
     with TestClient(order_app, raise_server_exceptions=False) as client:
         yield OrderEnv(client, stock_tc, payment)
 

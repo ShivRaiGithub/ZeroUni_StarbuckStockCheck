@@ -3,6 +3,8 @@
 The order service runs against the real stock service and the fake payment provider, all
 in-process. Messages are compared character for character with CLAUDE.md and spec.md.
 """
+import json
+
 import httpx
 import pytest
 
@@ -278,6 +280,118 @@ def test_payment_timeout_is_503_and_keeps_the_hold(tmp_path):
         assert body["error"]["code"] == "payment_status_unknown"
         levels = stock_levels(env.stock, "SB-10482", "Oatmilk")
         assert (levels["reserved_quantity"], levels["available"]) == (1, 0), "hold kept while payment unknown"
+
+
+# ------------------------------------------------------------------ save before send, release before retry
+
+HOLD_C = "hold_" + "C" * 26
+
+
+def _scripted_stock(hold_behaviour, release_behaviour):
+    """Stock stub. hold_behaviour(key) / release_behaviour(key) return "ok" or "timeout"."""
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request)
+        path = request.url.path
+        if path == "/v1/holds":
+            if hold_behaviour(request.headers["Idempotency-Key"]) == "timeout":
+                raise httpx.ReadTimeout("stock did not answer", request=request)
+            return httpx.Response(201, json={"hold_id": HOLD_C, "store_id": "SB-10482", "status": "active",
+                                             "expires_at": "2030-01-01T00:00:00Z",
+                                             "items": [{"component_name": "Oatmilk", "quantity": 1}]})
+        if path == "/v1/hold-releases":
+            key = json.loads(request.content)["idempotency_key"]
+            if release_behaviour(key) == "timeout":
+                raise httpx.ReadTimeout("stock did not answer", request=request)
+            return httpx.Response(200, json={"idempotency_key": key, "outcome": "tombstoned", "hold_id": None})
+        if path.endswith("/confirm") or path.endswith("/release"):
+            status = "confirmed" if path.endswith("/confirm") else "released"
+            return httpx.Response(200, json={"hold_id": HOLD_C, "store_id": "SB-10482", "status": status,
+                                             "expires_at": "2030-01-01T00:00:00Z", "items": []})
+        return httpx.Response(404, json={"request_id": "s", "error": {"code": "hold_not_found",
+                                                                       "message": "no", "details": []}})
+
+    return calls, handler
+
+
+def stock_sequence(calls) -> list[tuple[str, str]]:
+    """("hold", key) / ("release", key) / ("other", path), in the order the stock stub saw them."""
+    out = []
+    for c in calls:
+        if c.url.path == "/v1/holds":
+            out.append(("hold", c.headers["Idempotency-Key"]))
+        elif c.url.path == "/v1/hold-releases":
+            out.append(("release", json.loads(c.content)["idempotency_key"]))
+        else:
+            out.append(("other", c.url.path))
+    return out
+
+
+@pytest.mark.parametrize("save_point", ["order", "attempt"])
+def test_failed_save_sends_nothing_and_returns_503(tmp_path, save_point):
+    # The order service cannot save its state: nothing may go to stock or payment, the app gets a
+    # retryable 503, and once storage recovers the same order_id starts at attempt 1.
+    storage = {"broken": True}
+    calls, handler = _scripted_stock(lambda key: "ok", lambda key: "ok")
+    order_in = order_body("MO-C-0021", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk"))
+    with order_service(tmp_path, stock_client=mock_client(handler, "http://stock"),
+                       fail_saves=lambda point: storage["broken"] and point == save_point) as env:
+        r = place(env, order_in)
+        body = ORDER.check(r)
+        assert r.status_code == 503
+        assert body["error"]["code"] == "order_storage_unavailable"
+        assert body["error"]["message"] == "We couldn't take your order just now. Please try again shortly."
+        assert int(r.headers["Retry-After"]) >= 1
+        assert calls == [], "a failed save must send nothing to the stock service"
+        assert env.payment.calls == [], "a failed save must send nothing to payment"
+
+        storage["broken"] = False
+        retry = place(env, order_in)
+        assert ORDER.check(retry)["status"] == "accepted"
+        assert retry.status_code == 201
+        assert stock_sequence(calls)[0] == ("hold", "MO-C-0021:hold:1"), "nothing was sent, so attempt 1 again"
+        assert env.payment.calls_for("MO-C-0021") == 1
+
+
+def test_release_timeout_blocks_the_next_hold(tmp_path):
+    # Every hold and every release times out. The retry must not place :hold:2, because :hold:1 was
+    # never confirmed released or tombstoned.
+    calls, handler = _scripted_stock(lambda key: "timeout", lambda key: "timeout")
+    order_in = order_body("MO-C-0022", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk"))
+    with order_service(tmp_path, stock_client=mock_client(handler, "http://stock")) as env:
+        first, second = place(env, order_in), place(env, order_in)
+        for r in (first, second):
+            assert ORDER.check(r)["error"]["code"] == "stock_service_unavailable"
+            assert r.status_code == 503
+        seq = stock_sequence(calls)
+        holds = [key for kind, key in seq if kind == "hold"]
+        releases = [key for kind, key in seq if kind == "release"]
+        assert holds == ["MO-C-0022:hold:1", "MO-C-0022:hold:1"], "only the first request's same-key retry"
+        assert not any(key.endswith(":hold:2") for key in holds), "no second hold while :hold:1 is unreleased"
+        assert len(releases) >= 2 and set(releases) == {"MO-C-0022:hold:1"}, "release tried again before any new hold"
+        assert env.payment.calls == []
+
+
+def test_restart_releases_saved_attempt_before_next_hold(tmp_path):
+    # Attempt 1 is saved and :hold:1 times out (its release too). The order service restarts on the
+    # same database. Its first stock call must release :hold:1; only then may :hold:2 go out.
+    order_in = order_body("MO-C-0023", "SB-10482", line("Caffè Latte", "Grande", "Oatmilk"))
+    _, before = _scripted_stock(lambda key: "timeout", lambda key: "timeout")
+    with order_service(tmp_path, stock_client=mock_client(before, "http://stock")) as env:
+        r = place(env, order_in)
+        assert ORDER.check(r)["error"]["code"] == "stock_service_unavailable"
+
+    calls, after = _scripted_stock(lambda key: "ok", lambda key: "ok")
+    with order_service(tmp_path, stock_client=mock_client(after, "http://stock")) as env:  # the restart
+        retry = place(env, order_in)
+        assert ORDER.check(retry)["status"] == "accepted"
+        assert retry.status_code == 201
+        seq = [s for s in stock_sequence(calls) if s[0] in ("hold", "release")]
+        assert seq[0] == ("release", "MO-C-0023:hold:1"), "first stock call after restart releases the saved attempt"
+        assert [key for kind, key in seq if kind == "hold"] == ["MO-C-0023:hold:2"]
+        assert seq.index(("hold", "MO-C-0023:hold:2")) > seq.index(("release", "MO-C-0023:hold:1"))
+        assert env.payment.calls_for("MO-C-0023") == 1
 
 
 # ------------------------------------------------------------------ hold expired before confirm

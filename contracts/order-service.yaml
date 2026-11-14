@@ -238,6 +238,10 @@ components:
             same Idempotency-Key; no payment was requested and the hold was released by key.
           payment_status_unknown: payment timed out; the hold is kept until payment resolves, so
             the customer is never told "unavailable" after a charge.
+          order_storage_unavailable: the order service could not save its own state, so it sent
+            NOTHING to the stock service or to payment for this request.
+        Also stock_service_unavailable when the release of the previous hold attempt did not get
+        a 200: no new hold is placed until it does.
       headers:
         Retry-After:
           schema: { type: integer, minimum: 1 }
@@ -512,7 +516,7 @@ components:
           type: object
           required: [code, message, details]
           properties:
-            code: { type: string, enum: [stock_service_unavailable, payment_status_unknown] }
+            code: { type: string, enum: [stock_service_unavailable, payment_status_unknown, order_storage_unavailable] }
             message: { type: string, minLength: 1 }
             details:
               type: array
@@ -520,5 +524,5 @@ components:
                 type: object
                 required: [reason, retryable]
                 properties:
-                  reason: { type: string, enum: [stock_service_unavailable, payment_status_unknown] }
+                  reason: { type: string, enum: [stock_service_unavailable, payment_status_unknown, order_storage_unavailable] }
                   retryable: { const: true }

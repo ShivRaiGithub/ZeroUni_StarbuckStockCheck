@@ -151,7 +151,8 @@ class StockService:
                   (hold_id, key, store["store_id"], expires_at.isoformat(), expires_at.timestamp(), now.isoformat()))
         for position, (comp, n) in enumerate(needs.items()):
             c.execute("UPDATE store_stock SET reserved_quantity = reserved_quantity + ?, last_updated_at = ? "
-                      "WHERE store_id = ? AND component_name = ?", (n["need"], now.isoformat(), store["store_id"], comp))
+                      "WHERE store_id = ? AND component_name = ?",
+                      (n["need"], now.isoformat(), store["store_id"], comp))
             c.execute("INSERT INTO hold_items VALUES (?, ?, ?, ?)", (hold_id, position, comp, n["need"]))
         hold = c.execute("SELECT * FROM holds WHERE hold_id = ?", (hold_id,)).fetchone()
         return 201, hold_dict(c, hold)
@@ -234,7 +235,8 @@ class StockService:
             c.execute("INSERT OR IGNORE INTO store_stock VALUES (?, ?, 0, 0, ?)",
                       (store["store_id"], component, now.isoformat()))
             c.execute("UPDATE store_stock SET quantity_on_hand = MAX(0, quantity_on_hand + ?), last_updated_at = ? "
-                      "WHERE store_id = ? AND component_name = ?", (delta, now.isoformat(), store["store_id"], component))
+                      "WHERE store_id = ? AND component_name = ?",
+                      (delta, now.isoformat(), store["store_id"], component))
             r = c.execute("SELECT * FROM store_stock WHERE store_id = ? AND component_name = ?",
                           (store["store_id"], component)).fetchone()
             return 200, {"store_id": public, "component_name": component,

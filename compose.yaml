@@ -1,0 +1,58 @@
+# Starts the three services, each in its own container, talking to each other only over HTTP:
+#
+#   app ──HTTP──> gateway :8088 ──HTTP──> order ──HTTP──> stock
+#
+#   docker compose up -d --build        # stock, order, gateway
+#   docker compose ps                   # all three "running (healthy)"
+#   curl -s localhost:8088/v1/orders -H 'Content-Type: application/json' -d '{"order_id":"MO-DEMO-1",
+#     "store_id":"SB-10482","drinks":[{"drink":"Caffè Latte","size":"Grande","milk":"Oatmilk","add_ins":[],"quantity":1}]}'
+#   -> 409 component_unavailable naming Oatmilk (First Hill's Oatmilk is sold out in StoreStock)
+#
+# No shared database (CLAUDE.md rule 2): stock and order each keep a private SQLite file inside
+# their own container; the gateway keeps nothing. The stock service is seeded from ./StoreStock.
+#
+# Payment: the order service only calls payment after a stock hold succeeds, so refusals (store
+# closed, out of stock) never need it. To place orders that get accepted, also start the fake
+# payment provider used by the tests:  docker compose --profile payment up -d --build
+name: mobile-order
+
+services:
+  stock:
+    build: { context: ., dockerfile: services/stock/Dockerfile }
+    image: mobile-order/stock:local
+    environment:
+      STOCK_SNAPSHOT_PATH: /seed/StoreStock
+    volumes:
+      - ./StoreStock:/seed/StoreStock:ro
+    ports:
+      - "127.0.0.1:8002:8000"   # local inspection only (availability); the order service uses http://stock:8000
+
+  order:
+    build: { context: ., dockerfile: services/order/Dockerfile }
+    image: mobile-order/order:local
+    environment:
+      STOCK_URL: http://stock:8000
+      PAYMENT_URL: ${PAYMENT_URL:-http://payment:8000}
+    depends_on:
+      stock: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  gateway:
+    build: { context: ., dockerfile: services/gateway/Dockerfile }
+    image: mobile-order/gateway:local
+    environment:
+      ORDER_URL: http://order:8000
+    depends_on:
+      order: { condition: service_healthy }
+    ports:
+      - "${GATEWAY_PORT:-8088}:8000"   # the public entry point (GATEWAY_PORT to change it)
+
+  # Opt-in (profile "payment"): the in-repo fake payment provider (tests/fakes/payment.py).
+  payment:
+    profiles: [payment]
+    image: mobile-order/order:local
+    command: ["uvicorn", "payment:app", "--app-dir", "/fakes", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./tests/fakes/payment.py:/fakes/payment.py:ro
+    healthcheck: { disable: true }

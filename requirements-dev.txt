@@ -1,0 +1,3 @@
+# Dev-only tools (not installed in service images).
+-r requirements.txt
+ruff==0.17.5

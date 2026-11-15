@@ -81,7 +81,8 @@ def test_shipped_order_image_refuses_fail_saves_and_accepts_an_order_when_clean(
         with httpx.Client(base_url=published(order), timeout=10) as client:
             r = client.post("/v1/orders", json={
                 "order_id": "MO-IMAGE-0001", "store_id": "SB-10482", "submitted_at": "2025-03-07T07:00:00-08:00",
-                "drinks": [{"drink": "Caffè Latte", "size": "Grande", "milk": "2% Milk", "add_ins": [], "quantity": 1}]})
+                "drinks": [{"drink": "Caffè Latte", "size": "Grande", "milk": "2% Milk", "add_ins": [],
+                            "quantity": 1}]})
             body = ORDER.check(r)
             assert r.status_code == 201, r.text
             assert (body["order_id"], body["status"]) == ("MO-IMAGE-0001", "accepted")

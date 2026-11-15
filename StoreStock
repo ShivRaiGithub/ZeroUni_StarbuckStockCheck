@@ -1,0 +1,31 @@
+store_id,store_name,store_open,component_id,component_name,component_type,quantity_on_hand,reserved_quantity,last_updated_at
+10482,First Hill - Madison & Boylston,true,espresso_signature,Signature Espresso Roast,drink_base,142,4,2025-03-07T06:42:18-08:00
+10482,First Hill - Madison & Boylston,true,oat_milk,Oatmilk,drink_base,0,0,2025-03-07T06:35:00-08:00
+10482,First Hill - Madison & Boylston,true,almond_milk,Almondmilk,drink_base,38,1,2025-03-07T06:41:05-08:00
+10482,First Hill - Madison & Boylston,true,two_pct_milk,2% Milk,drink_base,96,3,2025-03-07T06:43:40-08:00
+10482,First Hill - Madison & Boylston,true,brown_sugar_syrup,Brown Sugar Syrup,add_in,64,2,2025-03-07T06:40:22-08:00
+10482,First Hill - Madison & Boylston,true,vanilla_syrup,Vanilla Syrup,add_in,88,2,2025-03-07T06:39:57-08:00
+10482,First Hill - Madison & Boylston,true,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,27,1,2025-03-07T06:38:14-08:00
+10482,First Hill - Madison & Boylston,true,matcha_powder,Matcha Tea Powder,drink_base,45,0,2025-03-07T06:36:48-08:00
+10482,First Hill - Madison & Boylston,true,caramel_drizzle,Caramel Drizzle,add_in,52,1,2025-03-07T06:37:31-08:00
+10482,First Hill - Madison & Boylston,true,cups_ice,Cups & Ice,drink_base,176,6,2025-03-07T06:44:12-08:00
+11307,Capitol Hill - Broadway & Pine,true,espresso_signature,Signature Espresso Roast,drink_base,128,5,2025-03-07T06:43:51-08:00
+11307,Capitol Hill - Broadway & Pine,true,oat_milk,Oatmilk,drink_base,2,1,2025-03-07T06:44:02-08:00
+11307,Capitol Hill - Broadway & Pine,true,almond_milk,Almondmilk,drink_base,0,0,2025-03-07T06:31:27-08:00
+11307,Capitol Hill - Broadway & Pine,true,two_pct_milk,2% Milk,drink_base,104,3,2025-03-07T06:42:36-08:00
+11307,Capitol Hill - Broadway & Pine,true,brown_sugar_syrup,Brown Sugar Syrup,add_in,41,2,2025-03-07T06:40:09-08:00
+11307,Capitol Hill - Broadway & Pine,true,vanilla_syrup,Vanilla Syrup,add_in,73,1,2025-03-07T06:39:15-08:00
+11307,Capitol Hill - Broadway & Pine,true,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,19,2,2025-03-07T06:41:44-08:00
+11307,Capitol Hill - Broadway & Pine,true,matcha_powder,Matcha Tea Powder,drink_base,33,1,2025-03-07T06:38:02-08:00
+11307,Capitol Hill - Broadway & Pine,true,caramel_drizzle,Caramel Drizzle,add_in,47,0,2025-03-07T06:36:20-08:00
+11307,Capitol Hill - Broadway & Pine,true,cups_ice,Cups & Ice,drink_base,168,5,2025-03-07T06:44:30-08:00
+09815,South Lake Union - Westlake & Mercer,false,espresso_signature,Signature Espresso Roast,drink_base,160,0,2025-03-07T06:28:44-08:00
+09815,South Lake Union - Westlake & Mercer,false,oat_milk,Oatmilk,drink_base,72,0,2025-03-07T06:27:10-08:00
+09815,South Lake Union - Westlake & Mercer,false,almond_milk,Almondmilk,drink_base,54,0,2025-03-07T06:27:38-08:00
+09815,South Lake Union - Westlake & Mercer,false,two_pct_milk,2% Milk,drink_base,120,0,2025-03-07T06:26:55-08:00
+09815,South Lake Union - Westlake & Mercer,false,brown_sugar_syrup,Brown Sugar Syrup,add_in,80,0,2025-03-07T06:24:03-08:00
+09815,South Lake Union - Westlake & Mercer,false,vanilla_syrup,Vanilla Syrup,add_in,96,0,2025-03-07T06:24:31-08:00
+09815,South Lake Union - Westlake & Mercer,false,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,36,0,2025-03-07T06:29:17-08:00
+09815,South Lake Union - Westlake & Mercer,false,matcha_powder,Matcha Tea Powder,drink_base,60,0,2025-03-07T06:25:46-08:00
+09815,South Lake Union - Westlake & Mercer,false,caramel_drizzle,Caramel Drizzle,add_in,64,0,2025-03-07T05:50:00-08:00
+09815,South Lake Union - Westlake & Mercer,false,cups_ice,Cups & Ice,drink_base,180,0,2025-03-07T06:30:22-08:00

@@ -291,7 +291,8 @@ class OrderFlow:
         items = []
         for s in sorted(shortfalls, key=lambda s: detail_sort_key(lines, s["line_item"], s["missing_component"])):
             line = lines[s["line_item"] - 1]
-            items.append({"reason": s["reason"], "line_item": s["line_item"], "missing_component": s["missing_component"],
+            items.append({"reason": s["reason"], "line_item": s["line_item"],
+                          "missing_component": s["missing_component"],
                           "message": msg.component_unavailable(s["line_item"], line["size"], line["drink"],
                                                                s["missing_component"])})
         return error("component_unavailable", items[0]["message"], items)

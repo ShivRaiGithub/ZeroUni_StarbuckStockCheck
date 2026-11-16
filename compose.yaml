@@ -9,7 +9,8 @@
 #   -> 409 component_unavailable naming Oatmilk (First Hill's Oatmilk is sold out in StoreStock)
 #
 # No shared database (CLAUDE.md rule 2): stock and order each keep a private SQLite file inside
-# their own container; the gateway keeps nothing. The stock service is seeded from ./StoreStock.
+# their own container; the gateway keeps nothing. The stock service is seeded from ./StoreStock
+# (or $STOCK_SEED: the live tests seed every sample store and component, see tests/live/conftest.py).
 #
 # Payment: the order service only calls payment after a stock hold succeeds, so refusals (store
 # closed, out of stock) never need it. To place orders that get accepted, also start the fake
@@ -23,7 +24,7 @@ services:
     environment:
       STOCK_SNAPSHOT_PATH: /seed/StoreStock
     volumes:
-      - ./StoreStock:/seed/StoreStock:ro
+      - ${STOCK_SEED:-./StoreStock}:/seed/StoreStock:ro   # tests/live use STOCK_SEED=./tests/live/SampleStock.csv
     ports:
       - "127.0.0.1:8002:8000"   # local inspection only (availability); the order service uses http://stock:8000
 

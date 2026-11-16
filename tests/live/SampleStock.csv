@@ -1,0 +1,40 @@
+store_id,store_name,store_open,component_id,component_name,component_type,quantity_on_hand,reserved_quantity,last_updated_at
+10482,First Hill - Madison & Boylston,true,2_pct_milk,2% Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,almondmilk,Almondmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,coconutmilk,Coconutmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,nonfat_milk,Nonfat Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,oatmilk,Oatmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,soymilk,Soymilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,whole_milk,Whole Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,brown_sugar_syrup,Brown Sugar Syrup,add_in,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,caramel_drizzle,Caramel Drizzle,add_in,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,cinnamon_dolce_topping,Cinnamon Dolce Topping,add_in,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,extra_shot,Extra Shot,add_in,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,50,0,2025-03-03T05:00:00-08:00
+10482,First Hill - Madison & Boylston,true,vanilla_syrup,Vanilla Syrup,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,2_pct_milk,2% Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,almondmilk,Almondmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,coconutmilk,Coconutmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,nonfat_milk,Nonfat Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,oatmilk,Oatmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,soymilk,Soymilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,whole_milk,Whole Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,brown_sugar_syrup,Brown Sugar Syrup,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,caramel_drizzle,Caramel Drizzle,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,cinnamon_dolce_topping,Cinnamon Dolce Topping,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,extra_shot,Extra Shot,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,50,0,2025-03-03T05:00:00-08:00
+11937,Sample Store 11937,true,vanilla_syrup,Vanilla Syrup,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,2_pct_milk,2% Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,almondmilk,Almondmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,coconutmilk,Coconutmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,nonfat_milk,Nonfat Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,oatmilk,Oatmilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,soymilk,Soymilk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,whole_milk,Whole Milk,drink_base,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,brown_sugar_syrup,Brown Sugar Syrup,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,caramel_drizzle,Caramel Drizzle,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,cinnamon_dolce_topping,Cinnamon Dolce Topping,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,extra_shot,Extra Shot,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,vanilla_sweet_cream_cold_foam,Vanilla Sweet Cream Cold Foam,add_in,50,0,2025-03-03T05:00:00-08:00
+20516,Bellevue Square,false,vanilla_syrup,Vanilla Syrup,add_in,50,0,2025-03-03T05:00:00-08:00

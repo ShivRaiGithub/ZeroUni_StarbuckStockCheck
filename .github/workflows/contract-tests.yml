@@ -93,3 +93,82 @@ jobs:
           ORDER_IMAGE: order-service:ci
           STOCK_IMAGE: stock-service:ci
         run: pytest -v tests/image/test_order_image.py
+
+  # SC-004: two oat milk lattes at once for the last Oatmilk.
+  # Starts the real stack with docker compose (stock, order, gateway + fake payment), seeded with
+  # tests/live/SampleStock.csv, and sends orders through the gateway over HTTP.
+  # Separate from the required contract-tests check.
+  race:
+    name: race
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Start the stack
+        env:
+          STOCK_SEED: ./tests/live/SampleStock.csv
+        run: docker compose --profile payment up -d --build --wait
+
+      - name: "Two oat milk lattes at once: one accepted, one refused naming Oatmilk"
+        run: pytest -v -rA tests/live/test_concurrent_oat_milk.py
+
+      - name: Service logs
+        if: failure()
+        run: docker compose --profile payment logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose --profile payment down
+
+  # SC-001: all 40 sample orders, expected vs actual in the job summary.
+  # Starts the real stack with docker compose (stock, order, gateway + fake payment), seeded with
+  # tests/live/SampleStock.csv, and sends orders through the gateway over HTTP.
+  # Separate from the required contract-tests check.
+  replay:
+    name: replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Start the stack
+        env:
+          STOCK_SEED: ./tests/live/SampleStock.csv
+        run: docker compose --profile payment up -d --build --wait
+
+      - name: All 40 sample orders through the gateway
+        env:
+          REPLAY_REPORT: replay.md
+        run: pytest -v -rf tests/live/test_sample_orders_live.py
+
+      - name: Expected vs actual per order
+        if: success() || failure()
+        run: |
+          { echo "| order | expected | actual | match |"; echo "|---|---|---|---|"; cat replay.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Service logs
+        if: failure()
+        run: docker compose --profile payment logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose --profile payment down

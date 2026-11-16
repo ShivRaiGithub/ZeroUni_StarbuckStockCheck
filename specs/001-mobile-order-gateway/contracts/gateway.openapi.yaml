@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: Mobile Order Gateway
+  version: 1.0.0
+  description: |
+    Public entry point. Routing and response translation only: no stock or order logic, no
+    storage, does not decide acceptance. All paths under /v1. Order-service responses (every
+    status, including 409 refusals) pass through unchanged except request_id. The gateway
+    itself only ever emits 503 order_service_unavailable, and never 502 or 504.
+    End-to-end budget 3 s; gateway -> order timeout 2.8 s.
+servers:
+  - url: https://api.example.com
+paths:
+  /v1/orders:
+    post:
+      operationId: placeOrder
+      summary: Proxy to order service POST /v1/orders
+      parameters: [ { $ref: '#/components/parameters/RequestId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './order-service.openapi.yaml#/components/schemas/OrderRequest' }
+      responses:
+        '201': { description: Accepted (pass-through), content: { application/json: { schema: { $ref: './order-service.openapi.yaml#/components/schemas/Order' } } } }
+        '400': { $ref: '#/components/responses/PassThroughError' }
+        '402': { $ref: '#/components/responses/PassThroughError' }
+        '404': { $ref: '#/components/responses/PassThroughError' }
+        '409':
+          description: Refusal from the order service, passed through with its code, message and details intact
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '500': { $ref: '#/components/responses/PassThroughError' }
+        '503':
+          description: |
+            order_service_unavailable (gateway could not reach the order service or it did not
+            answer within 2.8 s) OR a pass-through 503 from the order service. Retryable with the
+            same order_id.
+          headers:
+            Retry-After: { schema: { type: integer, example: 1 } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                request_id: 3f6c…
+                error:
+                  code: order_service_unavailable
+                  message: We can't take orders right now. Please try again shortly.
+                  details: { retryable: true }
+  /v1/orders/{order_id}:
+    get:
+      operationId: getOrder
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200': { description: Order (pass-through), content: { application/json: { schema: { $ref: './order-service.openapi.yaml#/components/schemas/Order' } } } }
+        '404': { $ref: '#/components/responses/PassThroughError' }
+        '503': { $ref: '#/components/responses/PassThroughError' }
+components:
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Propagated if supplied, otherwise generated (UUIDv4); echoed in request_id and response header
+      schema: { type: string }
+  responses:
+    PassThroughError:
+      description: Error envelope from the order service, unchanged except request_id
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  schemas:
+    ErrorEnvelope:
+      description: |
+        Existing shared envelope { error: { code, message }, request_id } with additive
+        `details`. code / message / request_id are never renamed.
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string, minLength: 1 }
+            details: { type: object, additionalProperties: true }

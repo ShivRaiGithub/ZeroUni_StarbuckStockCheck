@@ -1,0 +1,528 @@
+openapi: 3.1.0
+info:
+  title: Order Service
+  version: 1.0.0
+  description: |
+    Owns orders. Never reads stock data and never keeps a copy of stock counts or store status.
+
+    Flow: validate -> POST stock /v1/holds (the commit-time stock check) -> only on 201, request
+    payment -> confirm the hold on charge / release it immediately on decline.
+
+    Refusals follow CLAUDE.md rules 4-8 and are ALWAYS HTTP 409, never 502/503/504:
+      - rule 4 store_closed: code `store_closed`, message "<Store Name> is closed right now and
+        can't take mobile orders." Takes precedence over any stock problem.
+      - rules 5-8: code `component_unavailable`, one error.details[] entry per failing
+        line/component, error.message = "Line <n>, <Size> <Drink>: <Component> is unavailable at
+        this store right now." for details[0].
+          rule 5 base_out_of_stock      milk available (on_hand - reserved) <= 0
+          rule 6 add_in_out_of_stock    any add-in available <= 0 (never accepted with it dropped)
+          rule 7 stock_runs_out_mid_order  stock is re-checked at commit (the hold); whatever is
+                                        short at commit is reported as base_out_of_stock,
+                                        add_in_out_of_stock or insufficient_quantity
+          rule 8 insufficient_quantity  0 < available < line quantity x units per drink
+      No payment is requested for any refusal and nothing stays reserved. Stock never goes negative.
+
+    order_id is the idempotency key: a repeat with the same body returns the original status and
+    body; a repeat with a different body is 409 order_id_conflict.
+
+    Hold expired before confirm (after a charge): the order service makes ONE fresh hold (a new
+    commit-time stock check, Idempotency-Key "{order_id}:rehold:{n}"). If it succeeds the hold is
+    confirmed and the order stays accepted. If it is refused, the charge is refunded and the order
+    ends as `refunded`: 409 order_refunded, whose message never says "unavailable" (a charged
+    customer must never see "unavailable"). If the client is not waiting, the outcome is visible
+    through GET /v1/orders/{order_id}.
+servers:
+  - url: http://order:8000
+paths:
+  /v1/orders:
+    post:
+      operationId: placeOrder
+      summary: Place a mobile order (stock and hours checked before payment)
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderRequest' }
+            example:
+              order_id: MO-250303-0003
+              store_id: SB-10482
+              submitted_at: '2025-03-03T06:48:17-08:00'
+              drinks:
+                - { drink: Pike Place Roast, size: Venti, milk: None, add_ins: [], quantity: 1 }
+      responses:
+        '201':
+          description: Accepted. Stock held and confirmed, payment charged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/InvalidOrder' }
+        '402': { $ref: '#/components/responses/PaymentDeclined' }
+        '404': { $ref: '#/components/responses/UnknownStore' }
+        '409': { $ref: '#/components/responses/Refusal' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /v1/orders/{order_id}:
+    get:
+      operationId: getOrder
+      summary: Read an order's current state
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Propagated from the gateway and echoed as request_id.
+      schema: { type: string }
+
+  responses:
+    InvalidOrder:
+      description: invalid_order. Malformed order or unrecognised drink/size/milk/add-in; the whole order is rejected, nothing reserved, no payment.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/InvalidOrderError' }
+          examples:
+            missing_store:
+              value:
+                request_id: req-1
+                error:
+                  code: invalid_order
+                  message: store_id is required.
+                  details: [ { reason: missing_field, field: store_id } ]
+            no_drinks:
+              value:
+                request_id: req-2
+                error:
+                  code: invalid_order
+                  message: At least one drink is required.
+                  details: [ { reason: empty_list, field: drinks } ]
+            unrecognised_add_in:
+              value:
+                request_id: req-3
+                error:
+                  code: invalid_order
+                  message: 'Unrecognised add-in: Vanila Syrup.'
+                  details: [ { reason: unrecognised, field: add_ins, value: Vanila Syrup, line_item: 1 } ]
+    UnknownStore:
+      description: unknown_store
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/UnknownStoreError' }
+          example:
+            request_id: req-4
+            error:
+              code: unknown_store
+              message: Store SB-99999 does not exist.
+              details: [ { reason: unknown_store, store_id: SB-99999 } ]
+    Refusal:
+      description: |
+        Order refused (CLAUDE.md rules 4-8) or order_id reused with a different body.
+        Not retryable. No payment requested, nothing left reserved.
+        Also order_refunded: payment was taken, the hold expired before confirm, a fresh hold was
+        refused, and the payment was refunded in full. Final; not retryable.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/StoreClosedError'
+              - $ref: '#/components/schemas/ComponentUnavailableError'
+              - $ref: '#/components/schemas/OrderIdConflictError'
+              - $ref: '#/components/schemas/OrderRefundedError'
+          examples:
+            store_closed:
+              summary: Rule 4 (MO-250303-0001)
+              value:
+                request_id: req-5
+                error:
+                  code: store_closed
+                  message: Bellevue Square is closed right now and can't take mobile orders.
+                  details: [ { reason: store_closed, store_id: SB-20516, store_name: Bellevue Square } ]
+            base_out_of_stock:
+              summary: Rule 5 (MO-250304-0007)
+              value:
+                request_id: req-6
+                error:
+                  code: component_unavailable
+                  message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.'
+                  details:
+                    - { reason: base_out_of_stock, line_item: 1, missing_component: Almondmilk }
+            add_in_out_of_stock:
+              summary: Rule 6 (MO-250306-0019), add-in never dropped
+              value:
+                request_id: req-7
+                error:
+                  code: component_unavailable
+                  message: 'Line 1, Grande Iced Caramel Macchiato: Caramel Drizzle is unavailable at this store right now.'
+                  details:
+                    - { reason: add_in_out_of_stock, line_item: 1, missing_component: Caramel Drizzle }
+            stock_runs_out_mid_order:
+              summary: Rule 7 (MO-250307-0024), Oatmilk 1 at first check, 0 at commit
+              value:
+                request_id: req-8
+                error:
+                  code: component_unavailable
+                  message: 'Line 1, Grande Iced Brown Sugar Oatmilk Shaken Espresso: Oatmilk is unavailable at this store right now.'
+                  details:
+                    - { reason: base_out_of_stock, line_item: 1, missing_component: Oatmilk }
+            insufficient_quantity:
+              summary: Rule 8 (MO-250307-0028), 4 drinks, Brown Sugar Syrup available 1-3
+              value:
+                request_id: req-9
+                error:
+                  code: component_unavailable
+                  message: 'Line 1, Grande Iced Brown Sugar Oatmilk Shaken Espresso: Brown Sugar Syrup is unavailable at this store right now.'
+                  details:
+                    - { reason: insufficient_quantity, line_item: 1, missing_component: Brown Sugar Syrup }
+            several_lines:
+              summary: Every failing line is listed; message is for details[0]
+              value:
+                request_id: req-10
+                error:
+                  code: component_unavailable
+                  message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.'
+                  details:
+                    - { reason: base_out_of_stock, line_item: 1, missing_component: Almondmilk,
+                        message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.' }
+                    - { reason: base_out_of_stock, line_item: 2, missing_component: Oatmilk,
+                        message: 'Line 2, Venti Chai Tea Latte: Oatmilk is unavailable at this store right now.' }
+            order_id_conflict:
+              value:
+                request_id: req-11
+                error:
+                  code: order_id_conflict
+                  message: Order MO-250303-0003 was already submitted with different contents.
+                  details: [ { reason: order_id_conflict, order_id: MO-250303-0003 } ]
+            order_refunded:
+              summary: Charged, hold expired before confirm, fresh hold refused, payment refunded
+              value:
+                request_id: req-13
+                error:
+                  code: order_refunded
+                  message: We've refunded your payment in full. Oatmilk ran out before we could make your order. Please try again with a different option.
+                  details:
+                    - { reason: component_ran_out, order_id: MO-250307-0023, refunded: true,
+                        line_item: 1, missing_component: Oatmilk }
+    PaymentDeclined:
+      description: payment_declined. The stock hold was released immediately.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PaymentDeclinedError' }
+    OrderNotFound:
+      description: order_not_found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OrderNotFoundError' }
+    InternalError:
+      description: internal_error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/InternalErrorBody' }
+    DependencyUnavailable:
+      description: |
+        Not a refusal. The outcome is unknown, so the order is neither accepted nor refused; retry
+        with the SAME order_id is safe.
+          stock_service_unavailable: the hold call timed out or errored after one retry with the
+            same Idempotency-Key; no payment was requested and the hold was released by key.
+          payment_status_unknown: payment timed out; the hold is kept until payment resolves, so
+            the customer is never told "unavailable" after a charge.
+          order_storage_unavailable: the order service could not save its own state, so it sent
+            NOTHING to the stock service or to payment for this request.
+        Also stock_service_unavailable when the release of the previous hold attempt did not get
+        a 200: no new hold is placed until it does.
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DependencyUnavailableError' }
+          example:
+            request_id: req-12
+            error:
+              code: stock_service_unavailable
+              message: We couldn't check stock just now. Please try again shortly.
+              details: [ { reason: stock_service_unavailable, retryable: true } ]
+
+  schemas:
+    OrderRequest:
+      type: object
+      description: |
+        Required fields are enforced by the service and reported as 400 invalid_order (never the
+        framework's default 422), so they are not listed under `required` here.
+      properties:
+        order_id: { type: string, minLength: 1, maxLength: 64, description: Client-supplied unique ID; idempotency key }
+        store_id: { type: string, description: 'Public store ID, e.g. SB-10482. Always a string; leading zeros kept.' }
+        submitted_at: { type: string, format: date-time }
+        drinks:
+          type: array
+          description: Line n is drinks[n-1].
+          items: { $ref: '#/components/schemas/DrinkLine' }
+    DrinkLine:
+      type: object
+      properties:
+        drink: { type: string }
+        size: { $ref: '#/components/schemas/Size' }
+        milk: { type: string, description: '"None" for no milk' }
+        add_ins: { type: array, items: { type: string }, default: [] }
+        quantity: { type: integer, minimum: 1, maximum: 20, default: 1 }
+        total_price: { type: number, description: Informational only; not validated }
+    Size:
+      type: string
+      enum: [Tall, Grande, Venti]
+    Order:
+      type: object
+      required: [order_id, store_id, status, drinks]
+      properties:
+        order_id: { type: string }
+        store_id: { type: string }
+        status:
+          type: string
+          enum: [accepted, refused, rejected, payment_declined, hold_unknown, payment_unknown, refunded]
+        drinks:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/DrinkLine'
+              - type: object
+                required: [line_item]
+                properties:
+                  line_item: { type: integer, minimum: 1 }
+
+    # ---------- error envelope: { "error": { "code", "message", "details" }, "request_id" } ----------
+    ComponentUnavailableDetail:
+      type: object
+      required: [reason, line_item, missing_component]
+      properties:
+        reason:
+          type: string
+          enum: [base_out_of_stock, add_in_out_of_stock, insufficient_quantity]
+          description: |
+            base_out_of_stock (rule 5): the milk has available <= 0 at commit.
+            add_in_out_of_stock (rule 6): an add-in has available <= 0 at commit.
+            insufficient_quantity (rule 8): 0 < available < quantity x units per drink.
+            Rule 7 (ran out mid-order) is reported with whichever of these is true at commit.
+        line_item: { type: integer, minimum: 1 }
+        missing_component: { type: string, description: 'The milk or add-in that is short, e.g. "Oatmilk"' }
+        message:
+          type: string
+          pattern: "^Line [1-9][0-9]*, (Tall|Grande|Venti) .+: .+ is unavailable at this store right now\\.$"
+    ComponentUnavailableError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: component_unavailable }
+            message:
+              type: string
+              description: '"Line <n>, <Size> <Drink>: <Component> is unavailable at this store right now." for details[0]'
+              pattern: "^Line [1-9][0-9]*, (Tall|Grande|Venti) .+: .+ is unavailable at this store right now\\.$"
+            details:
+              type: array
+              minItems: 1
+              description: Every failing line/component, ordered by line_item then component.
+              items: { $ref: '#/components/schemas/ComponentUnavailableDetail' }
+    StoreClosedError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: store_closed }
+            message:
+              type: string
+              description: '"<Store Name> is closed right now and can''t take mobile orders."'
+              pattern: "^.+ is closed right now and can't take mobile orders\\.$"
+            details:
+              type: array
+              maxItems: 1
+              description: Never contains component_unavailable entries (store_closed takes precedence).
+              items:
+                type: object
+                required: [reason, store_id, store_name]
+                properties:
+                  reason: { const: store_closed }
+                  store_id: { type: string }
+                  store_name: { type: string }
+    InvalidOrderError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: invalid_order }
+            message: { type: string, minLength: 1 }
+            details:
+              type: array
+              minItems: 1
+              description: One entry per problem; every unrecognised item is named.
+              items:
+                type: object
+                required: [reason, field]
+                properties:
+                  reason: { type: string, enum: [missing_field, empty_list, invalid_value, unrecognised] }
+                  field: { type: string, enum: [order_id, store_id, drinks, drink, size, milk, add_ins, quantity] }
+                  value: { type: string }
+                  line_item: { type: integer, minimum: 1 }
+    UnknownStoreError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: unknown_store }
+            message: { type: string, pattern: "^Store .+ does not exist\\.$" }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason, store_id]
+                properties:
+                  reason: { const: unknown_store }
+                  store_id: { type: string }
+    OrderIdConflictError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: order_id_conflict }
+            message: { type: string, minLength: 1 }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason, order_id]
+                properties:
+                  reason: { const: order_id_conflict }
+                  order_id: { type: string }
+    OrderRefundedError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: order_refunded }
+            message:
+              type: string
+              description: |
+                By details[0].reason:
+                  component_ran_out -> "We've refunded your payment in full. <components> ran out before we
+                                       could make your order. Please try again with a different option."
+                                       <components> = every DISTINCT details[].missing_component, in
+                                       details[] order, joined as "A", "A and B" or "A, B and C".
+                  store_closed      -> "We've refunded your payment in full. <details[0].store_name> closed
+                                       before we could make your order."
+                  stock_unreachable -> "We've refunded your payment in full. We couldn't make your order
+                                       right now. Please try again shortly."
+                Never contains "unavailable": a charged customer must never see it (ServiceBoundary,
+                Mobile App Checkout). This overrides the CLAUDE.md rule 5-8 wording for charged orders only.
+              pattern: "^We've refunded your payment in full\\. .+\\.$"
+              not: { pattern: '[Uu][Nn][Aa][Vv][Aa][Ii][Ll][Aa][Bb][Ll][Ee]' }
+            details:
+              type: array
+              minItems: 1
+              description: |
+                component_ran_out: one item per short line/component, in a fixed order: by line_item,
+                then the milk before the add-ins, then add-ins in the order listed on that order line.
+                The order service sorts them itself; it does not rely on the stock service's order.
+              items:
+                type: object
+                required: [reason, order_id, refunded]
+                properties:
+                  reason: { type: string, enum: [component_ran_out, store_closed, stock_unreachable] }
+                  order_id: { type: string }
+                  refunded: { const: true }
+                  line_item: { type: integer, minimum: 1 }
+                  missing_component: { type: string, description: 'Fills <Component> in the message' }
+                  store_name: { type: string }
+                if: { properties: { reason: { const: component_ran_out } } }
+                then: { required: [line_item, missing_component] }
+                else:
+                  if: { properties: { reason: { const: store_closed } } }
+                  then: { required: [store_name] }
+    PaymentDeclinedError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: payment_declined }
+            message: { type: string, minLength: 1 }
+            details: { type: array, items: { type: object } }
+    OrderNotFoundError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: order_not_found }
+            message: { type: string, minLength: 1 }
+            details: { type: array, items: { type: object } }
+    InternalErrorBody:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: internal_error }
+            message: { type: string, minLength: 1 }
+            details: { type: array, items: { type: object } }
+    DependencyUnavailableError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { type: string, enum: [stock_service_unavailable, payment_status_unknown, order_storage_unavailable] }
+            message: { type: string, minLength: 1 }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason, retryable]
+                properties:
+                  reason: { type: string, enum: [stock_service_unavailable, payment_status_unknown, order_storage_unavailable] }
+                  retryable: { const: true }

@@ -17,6 +17,7 @@
 - Q: If the same order is sent twice, is the second copy the same order or a new one? → A: Same order; each order carries a client-supplied unique ID and a repeat returns the original result without reserving again.
 - Q: If the gateway cannot reach the order service, is the order refused or accepted for a later check? → A: Refused with a "try again shortly" message; no payment is taken and nothing is reserved.
 - Q: What happens when an order names an unrecognised drink, size, milk or add-in? → A: The whole order is rejected as invalid, naming each unrecognised item.
+- Q: Can a hold on reserved stock stay forever if it is never confirmed or released? → A: No. Per the ServiceBoundary review (Store Inventory hard constraint), every hold has an expiry and is confirmed, released, or expires on its own. Release on payment failure or cancellation is still immediate; the expiry is a backstop. This supersedes "there is no timed hold" above.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -115,7 +116,7 @@ A customer or client sends an order with a missing store, no drinks, an unknown 
 - **FR-010**: Accepted orders MUST reserve the stock they need so that concurrent orders cannot both take the last unit.
 - **FR-011**: Refusals MUST use fixed, documented status and error codes defined in the service contract.
 - **FR-012**: The entry point and the order checking MUST be separate services, each owning its own data and talking only through published contracts.
-- **FR-013**: Reserved stock MUST be released immediately when payment fails or is cancelled, and the system MUST NOT hold stock for a timed period.
+- **FR-013**: Reserved stock MUST be released immediately when payment fails or is cancelled. Every hold MUST also carry an expiry, so that each hold is either confirmed, released, or expires on its own and can never stay forever.
 - **FR-014**: Each order MUST carry a client-supplied unique ID, and a repeat submission with the same ID MUST return the original result and MUST NOT reserve stock or request payment again.
 - **FR-015**: If the order service cannot be reached or does not answer, the gateway MUST refuse the order with a "try again shortly" message, MUST NOT request payment, and MUST NOT reserve stock.
 

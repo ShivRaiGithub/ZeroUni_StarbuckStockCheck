@@ -1,0 +1,8 @@
+# Linter for the Stop hook and CI. Python 3.12 matches the contract-tests runner.
+target-version = "py312"
+line-length = 120
+extend-exclude = [".specify", "specs"]
+
+[lint]
+# pyflakes (F) + pycodestyle errors (E) + warnings (W): real bugs and broken code, not style debates.
+select = ["E", "F", "W"]

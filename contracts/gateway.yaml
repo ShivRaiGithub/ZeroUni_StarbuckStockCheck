@@ -1,0 +1,175 @@
+openapi: 3.1.0
+info:
+  title: Mobile Order Gateway
+  version: 1.0.0
+  description: |
+    Public entry point for app order calls. Routing and response translation only: no stock or
+    order business logic, no storage, does not decide whether an order is accepted.
+
+    - Every public path is under /v1.
+    - Envelope: { "error": { "code", "message", "details" }, "request_id" }. code, message and
+      request_id are never renamed; details is additive.
+    - Order-service responses (201/200, 400, 402, 404, 409) are passed through unchanged except
+      that request_id is set to the gateway's request ID. A 409 refusal keeps the order service's
+      code, message and details (CLAUDE.md rules 4-8); it is never collapsed or turned into 5xx.
+    - The gateway itself emits only 503 order_service_unavailable: when the order service is
+      unreachable, does not answer within 2.8 s (of the 3 s budget), or answers 5xx. It never
+      emits 502 or 504.
+    Bodies reuse the order service's schemas so a pass-through can never drift from them.
+servers:
+  - url: https://api.example.com
+paths:
+  /v1/orders:
+    post:
+      operationId: placeOrder
+      summary: Place a mobile order (proxied to order service POST /v1/orders)
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './order-service.yaml#/components/schemas/OrderRequest' }
+      responses:
+        '201':
+          description: Accepted (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/Order' }
+        '400':
+          description: invalid_order (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/InvalidOrderError' }
+        '402':
+          description: payment_declined (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/PaymentDeclinedError' }
+        '404':
+          description: unknown_store (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/UnknownStoreError' }
+              example:
+                request_id: gw-4
+                error:
+                  code: unknown_store
+                  message: Store SB-99999 does not exist.
+                  details: [ { reason: unknown_store, store_id: SB-99999 } ]
+        '409':
+          description: |
+            Refusal (pass-through, unchanged): store_closed (rule 4), component_unavailable
+            (rules 5-8), or order_id_conflict, where no payment was requested; or order_refunded,
+            where the payment was refunded in full. Not retryable.
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: './order-service.yaml#/components/schemas/StoreClosedError'
+                  - $ref: './order-service.yaml#/components/schemas/ComponentUnavailableError'
+                  - $ref: './order-service.yaml#/components/schemas/OrderIdConflictError'
+                  - $ref: './order-service.yaml#/components/schemas/OrderRefundedError'
+              examples:
+                store_closed:
+                  value:
+                    request_id: gw-5
+                    error:
+                      code: store_closed
+                      message: Bellevue Square is closed right now and can't take mobile orders.
+                      details: [ { reason: store_closed, store_id: SB-20516, store_name: Bellevue Square } ]
+                component_unavailable:
+                  value:
+                    request_id: gw-6
+                    error:
+                      code: component_unavailable
+                      message: 'Line 1, Grande Caffè Latte: Almondmilk is unavailable at this store right now.'
+                      details:
+                        - { reason: base_out_of_stock, line_item: 1, missing_component: Almondmilk }
+        '503':
+          description: |
+            order_service_unavailable: the gateway could not reach the order service, it did not
+            answer within 2.8 s, or it answered 5xx. Also passes through the order service's own
+            503 (stock_service_unavailable, payment_status_unknown). Retry with the same order_id
+            is safe. Never used for a refusal.
+          headers:
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+            X-Request-ID: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OrderServiceUnavailableError'
+                  - $ref: './order-service.yaml#/components/schemas/DependencyUnavailableError'
+              example:
+                request_id: gw-7
+                error:
+                  code: order_service_unavailable
+                  message: We can't take orders right now. Please try again shortly.
+                  details: [ { reason: order_service_unavailable, retryable: true } ]
+  /v1/orders/{order_id}:
+    get:
+      operationId: getOrder
+      summary: Read an order (proxied to order service GET /v1/orders/{order_id})
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Order (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/Order' }
+        '404':
+          description: order_not_found (pass-through)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: './order-service.yaml#/components/schemas/OrderNotFoundError' }
+        '503':
+          description: order_service_unavailable (unreachable, > 2.8 s, or 5xx)
+          headers:
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+            X-Request-ID: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderServiceUnavailableError' }
+
+components:
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Propagated if supplied, otherwise generated (UUIDv4); forwarded downstream.
+      schema: { type: string }
+  headers:
+    RequestId:
+      description: Same value as the body's request_id.
+      schema: { type: string }
+  schemas:
+    OrderServiceUnavailableError:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { const: order_service_unavailable }
+            message: { type: string, minLength: 1 }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason, retryable]
+                properties:
+                  reason: { const: order_service_unavailable }
+                  retryable: { const: true }
